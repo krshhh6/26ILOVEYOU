@@ -325,11 +325,12 @@ function computeDeterministicPhysicsScore(
  * Rejects high-contrast coastal fringes, mudflats, and narrow river inlets embedded in land
  * to avoid false-positive segmentation along shorelines.
  */
-function computeLandBufferMask(lum: Uint8Array | Float32Array, width: number, height: number, radius = 8): Uint8Array {
+function computeLandBufferMask(lum: Uint8Array | Float32Array, width: number, height: number, radius = 5): Uint8Array {
   const isLand = new Uint8Array(width * height);
   let landPixelCount = 0;
   for (let i = 0; i < width * height; i++) {
-    if (lum[i] >= 115) {
+    // True terrestrial land / structures have high radar backscatter (>= 165 in 8-bit scale)
+    if (lum[i] >= 165) {
       isLand[i] = 1;
       landPixelCount++;
     }
@@ -408,17 +409,17 @@ export function generateDeterministicMask(
       lum = Math.round(0.299 * data[i * 4] + 0.587 * data[i * 4 + 1] + 0.114 * data[i * 4 + 2]);
     }
     lums[i] = Math.max(0, Math.min(255, lum));
-    if (lum >= 12 && lum <= 130) {
+    if (lum >= 12 && lum <= 165) {
       sumLum += lum;
       validMarinePixels++;
     }
   }
 
-  const oceanMean = validMarinePixels > 0 ? sumLum / validMarinePixels : 75;
-  const dampThreshold = Math.min(68, Math.max(38, oceanMean * 0.82));
-  const coreThreshold = Math.min(42, Math.max(20, oceanMean * 0.50));
+  const oceanMean = validMarinePixels > 0 ? sumLum / validMarinePixels : 85;
+  const dampThreshold = Math.min(125, Math.max(35, oceanMean * 0.88));
+  const coreThreshold = Math.min(80, Math.max(20, oceanMean * 0.60));
 
-  const landBuffer = computeLandBufferMask(lums, width, height, 8);
+  const landBuffer = computeLandBufferMask(lums, width, height, 5);
   const rawMask = new Uint8Array(totalPixels);
 
   for (let i = 0; i < totalPixels; i++) {
@@ -430,6 +431,7 @@ export function generateDeterministicMask(
   }
 
   // 3x3 connected neighbor consistency check to eliminate single-pixel speckle noise
+  // while preserving thin linear filaments
   const maskImg = ctx.createImageData(width, height);
   const mData = maskImg.data;
   let spillPixels = 0;
@@ -451,9 +453,9 @@ export function generateDeterministicMask(
         }
       }
 
-      if (neighborCount >= 2) {
+      const isCore = lums[idx] <= coreThreshold;
+      if (neighborCount >= 1 || isCore) {
         spillPixels++;
-        const isCore = lums[idx] <= coreThreshold;
         const pIdx = idx * 4;
         mData[pIdx] = 255;                    // R: vivid warning red
         mData[pIdx + 1] = isCore ? 35 : 75;   // G
@@ -988,7 +990,7 @@ export async function classifyImage(
 
 async function runSegmentation(
   imageElement: HTMLImageElement | HTMLCanvasElement,
-  _dualPolRasters?: DualPolInputRasters,
+  dualPolRasters?: DualPolInputRasters,
   cropBox?: CropBox
 ): Promise<{ dataUrl: string; areaPercent: number }> {
   if (!segmenterSession) {
@@ -1010,29 +1012,53 @@ async function runSegmentation(
     const b = data[i * 4 + 2];
     const gray = Math.round(0.299 * r + 0.587 * g + 0.114 * b);
     grayValues[i] = gray;
-    if (gray >= 12 && gray <= 130) {
+    if (gray >= 12 && gray <= 165) {
       sumMarine += gray;
       marineCount++;
     }
   }
 
-  const ambientOceanMean = marineCount > 0 ? sumMarine / marineCount : 80;
-  const ambientVV = ambientOceanMean / 255.0;
-  const ambientVH = Math.max(0.0, ambientVV - 0.22);
+  const ambientOceanMean = marineCount > 0 ? sumMarine / marineCount : 85;
+  const landBuffer = computeLandBufferMask(grayValues, 512, 512, 5);
 
   const tensorData = new Float32Array(2 * numPixels);
+  const hasDirectRasters = !cropBox &&
+                           dualPolRasters?.vvRaster && dualPolRasters?.vhRaster &&
+                           dualPolRasters.vvRaster.length === numPixels &&
+                           dualPolRasters.vhRaster.length === numPixels;
 
-  for (let i = 0; i < numPixels; i++) {
-    const gray = grayValues[i];
-    if (gray < 10) {
-      // Synthetic black border / letterbox: pad with ambient ocean
-      // so U-Net receptive fields do NOT hallucinate and bleed into ocean
-      tensorData[i] = ambientVV;
-      tensorData[numPixels + i] = ambientVH;
-    } else {
-      const vv = gray / 255.0;
-      tensorData[i] = vv;
-      tensorData[numPixels + i] = Math.max(0.0, vv - 0.22);
+  if (hasDirectRasters) {
+    for (let i = 0; i < numPixels; i++) {
+      tensorData[i] = dualPolRasters.vvRaster![i];
+      tensorData[numPixels + i] = dualPolRasters.vhRaster![i];
+    }
+  } else {
+    // Adaptive marine contrast calibration for web / compressed SAR imagery:
+    // Aligns 8-bit dynamic range with the Zenodo trained SAR dB distribution
+    // (where clean ocean is ~0.62 and oil slick is ~0.15-0.30)
+    for (let i = 0; i < numPixels; i++) {
+      const gray = grayValues[i];
+      if (gray < 12) {
+        // Synthetic black border / letterbox: pad with ambient ocean
+        tensorData[i] = 0.62;
+        tensorData[numPixels + i] = 0.56;
+      } else if (gray >= 165) {
+        // High backscatter landmass / vessel metal
+        tensorData[i] = 1.0;
+        tensorData[numPixels + i] = 0.95;
+      } else if (gray <= ambientOceanMean) {
+        // Capillary damping depression (oil slick): maps [12, ambient] -> [0.10, 0.62]
+        const ratio = (gray - 12.0) / Math.max(1.0, ambientOceanMean - 12.0);
+        const vv = 0.10 + 0.52 * ratio;
+        tensorData[i] = vv;
+        tensorData[numPixels + i] = Math.max(0.0, vv - 0.05);
+      } else {
+        // Rough ocean water: maps (ambient, 165] -> (0.62, 0.92]
+        const ratio = (gray - ambientOceanMean) / Math.max(1.0, 165.0 - ambientOceanMean);
+        const vv = 0.62 + 0.30 * Math.min(1.0, ratio);
+        tensorData[i] = vv;
+        tensorData[numPixels + i] = Math.max(0.0, vv - 0.05);
+      }
     }
   }
 
@@ -1044,9 +1070,9 @@ async function runSegmentation(
   const output = results[segmenterSession.outputNames[0]];
   const outputData = output.data as Float32Array;
 
-  const dampThreshold = Math.min(68, Math.max(38, ambientOceanMean * 0.82));
-  const coreDampThreshold = Math.min(42, Math.max(20, ambientOceanMean * 0.50));
-  const landBuffer = computeLandBufferMask(grayValues, 512, 512, 8);
+  // Damping threshold: must be darker than ambient sea
+  const dampThreshold = Math.max(25, ambientOceanMean * 0.92);
+  const coreDampThreshold = Math.max(15, ambientOceanMean * 0.65);
 
   const rawMask = new Uint8Array(numPixels);
   for (let i = 0; i < numPixels; i++) {
@@ -1054,11 +1080,11 @@ async function runSegmentation(
     const gray = grayValues[i];
 
     // Physics-gated oil spill criteria:
-    // 1. High U-Net confidence (prob >= 0.62)
-    // 2. Strict non-black constraint: real radar signal (gray >= 12), not synthetic black void
+    // 1. Calibrated U-Net confidence (prob >= 0.35)
+    // 2. Real radar signal (gray >= 12), not synthetic black void
     // 3. Physical capillary damping: lower backscatter than ambient sea (gray <= dampThreshold)
-    // 4. Terrestrial land & coastal inlet exclusion: not inside land or coastal buffer
-    if (prob >= 0.62 && gray >= 12 && gray <= dampThreshold && landBuffer[i] === 0) {
+    // 4. Terrestrial land & coastal buffer exclusion
+    if (prob >= 0.35 && gray >= 12 && gray <= dampThreshold && landBuffer[i] === 0) {
       rawMask[i] = 1;
     }
   }
@@ -1075,6 +1101,7 @@ async function runSegmentation(
       if (rawMask[idx] === 0) continue;
 
       // 3x3 neighbor consistency check to eliminate single-pixel speckle noise
+      // while keeping thin 1-pixel-wide linear filaments connected
       let neighborCount = 0;
       for (let dy = -1; dy <= 1; dy++) {
         const ny = y + dy;
@@ -1087,11 +1114,15 @@ async function runSegmentation(
         }
       }
 
-      if (neighborCount >= 2) {
+      const prob = sigmoid(outputData[idx]);
+      // Keep pixel if:
+      // - High U-Net probability (>= 0.50), OR
+      // - Moderate U-Net probability (>= 0.35) AND connected to at least 1 neighbor
+      if (prob >= 0.50 || (prob >= 0.35 && neighborCount >= 1)) {
         spillPixels++;
         const gray = grayValues[idx];
-        const isCore = gray <= coreDampThreshold;
-        maskCtx.fillStyle = isCore ? 'rgba(255, 30, 0, 0.70)' : 'rgba(255, 60, 20, 0.52)';
+        const isCore = gray <= coreDampThreshold || prob >= 0.70;
+        maskCtx.fillStyle = isCore ? 'rgba(255, 30, 0, 0.75)' : 'rgba(255, 55, 15, 0.55)';
         maskCtx.fillRect(x, y, 1, 1);
       }
     }
