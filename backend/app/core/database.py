@@ -1,15 +1,21 @@
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 import os
-from dotenv import load_dotenv
-
-load_dotenv()
+try:
+    from dotenv import load_dotenv
+    load_dotenv()
+except ImportError:
+    pass
 
 # We expect a PostGIS enabled Postgres connection string
 SQLALCHEMY_DATABASE_URL = os.getenv(
     "DATABASE_URL", 
     "postgresql://postgres:postgres@localhost:5432/spillsense"
 )
+# Render and cloud providers often provide 'postgres://' which SQLAlchemy 1.4+ rejects
+if SQLALCHEMY_DATABASE_URL and SQLALCHEMY_DATABASE_URL.startswith("postgres://"):
+    SQLALCHEMY_DATABASE_URL = SQLALCHEMY_DATABASE_URL.replace("postgres://", "postgresql://", 1)
+
 
 try:
     engine = create_engine(SQLALCHEMY_DATABASE_URL)

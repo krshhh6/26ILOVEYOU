@@ -13,8 +13,9 @@ from typing import Dict, Any
 
 router = APIRouter(prefix="/ml", tags=["Machine Learning Quality & Benchmarking"])
 
-PROJECT_ROOT = Path(__file__).resolve().parents[3]
-BENCHMARK_PATH = PROJECT_ROOT / "backend" / "app" / "data" / "benchmark_report.json"
+APP_DIR = Path(__file__).resolve().parents[2]
+BENCHMARK_PATH = APP_DIR / "data" / "benchmark_report.json"
+
 
 
 @router.get("/metrics", response_model=Dict[str, Any])
