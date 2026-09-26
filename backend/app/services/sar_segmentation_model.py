@@ -86,6 +86,7 @@ class SARSPILLSegmentationEngine:
     MODEL_VERSION = "compact-s1-sar-unet-v2.5"
     GEOD = pyproj.Geod(ellps="WGS84")
 
+    def __init__(self, weights_path: str = None):
         self.ort_session = None
         self.device = None
         self.model = None
