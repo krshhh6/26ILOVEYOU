@@ -20,6 +20,15 @@ interface LeafletMapProps {
   onUpdateCoords: (coords: string) => void;
   onSelectScenario?: (key: string) => void;
   mapRef: React.MutableRefObject<L.Map | null>;
+  scenarios?: Record<string, Scenario>;
+  targetLocation?: {
+    lat: number;
+    lng: number;
+    zoom?: number;
+    title: string;
+    sub?: string;
+    category?: string;
+  } | null;
 }
 
 export const LeafletMap: React.FC<LeafletMapProps> = ({
@@ -28,7 +37,7 @@ export const LeafletMap: React.FC<LeafletMapProps> = ({
   showSeamarks,
   showIndiaOutline = true,
   showEezBoundary = true,
-  selectedCopernicusLayer = 'true-color',
+  selectedCopernicusLayer = 'sar-vv',
   layerOpacity = 1.0,
   showAiMask = false,
   showOverlay = true,
@@ -37,6 +46,8 @@ export const LeafletMap: React.FC<LeafletMapProps> = ({
   onUpdateCoords,
   onSelectScenario,
   mapRef,
+  scenarios,
+  targetLocation,
 }) => {
   const containerRef = useRef<HTMLDivElement>(null);
   const baseLayersRef = useRef<Record<string, L.TileLayer>>({});
@@ -45,6 +56,7 @@ export const LeafletMap: React.FC<LeafletMapProps> = ({
   const indiaOutlineLayerRef = useRef<L.LayerGroup | null>(null);
   const indiaBoundariesTileRef = useRef<L.TileLayer | null>(null);
   const driftLayerRef = useRef<L.GeoJSON | null>(null);
+  const searchTargetMarkerRef = useRef<L.Marker | null>(null);
   const cachedIndiaOutline = useRef<any>(null);
   const cachedIndiaEez = useRef<any>(null);
 
@@ -54,6 +66,8 @@ export const LeafletMap: React.FC<LeafletMapProps> = ({
 
     const initialCenter: [number, number] = scenario ? [scenario.lat, scenario.lng] : [15.5, 79.0];
     const initialZoom = scenario ? 11 : 4.25;
+
+    const maxWorldBounds = L.latLngBounds(L.latLng(-85.0, -180.0), L.latLng(85.0, 180.0));
 
     const map = L.map(containerRef.current, {
       center: initialCenter,
@@ -65,10 +79,29 @@ export const LeafletMap: React.FC<LeafletMapProps> = ({
       zoomControl: false,
       attributionControl: false,
       keyboard: false,
+      maxBounds: maxWorldBounds,
+      maxBoundsViscosity: 1.0,
+      worldCopyJump: false,
     });
 
     L.control.zoom({ position: 'topright' }).addTo(map);
     L.control.scale({ imperial: false, metric: true, position: 'bottomleft' }).addTo(map);
+
+    // 0. Official ISRO Bhuvan & Bhoonidhi Satellite Imagery (Govt of India / NRSC WMTS Server)
+    baseLayersRef.current.bhuvan = L.tileLayer(
+      'https://bhuvanmaps.nrsc.gov.in/bhuvan_ras3/server/rest/services/World_Imagery/MapServer/WMTS?service=WMTS&version=1.0.0&request=GetTile&layer=HYDImagery&style=default&tilematrixSet=GoogleMapsCompatible&tilematrix={z}&tilerow={y}&tilecol={x}&format=image/jpeg',
+      {
+        tileSize: 256,
+        minZoom: 3,
+        maxNativeZoom: 18,
+        maxZoom: 22,
+        attribution: '© ISRO NRSC Bhuvan / Bhoonidhi Satellite Imagery (Govt. of India)',
+        className: 'isro-bhuvan-satellite-tiles',
+        noWrap: true,
+        bounds: maxWorldBounds,
+      }
+    );
+    baseLayersRef.current['isro-bhuvan'] = baseLayersRef.current.bhuvan;
 
     // 1. Official ISRO Bhoonidhi / GEBCO Ocean Bathymetry & Indian EEZ Basemap (Primary Marine Basemap)
     // Exactly matches ISRO Bhoonidhi portal: persistent oceanic trenches, depth contours, and marine blue at all zoom levels
@@ -79,36 +112,64 @@ export const LeafletMap: React.FC<LeafletMapProps> = ({
         maxZoom: 22,
         attribution: '© ISRO Bhoonidhi / GEBCO / NOAA Ocean Bathymetry Relief',
         className: 'bhuvan-satellite-tiles',
+        noWrap: true,
+        bounds: maxWorldBounds,
       }
     );
 
-    // 2. High-Resolution Optical Satellite (ESRI World Imagery - Valid Ocean & High-Res Coastal Imagery at all zoom levels 0-22)
+    // 2. High-Resolution Optical Satellite (ArcGIS / ESRI World Imagery - Sub-meter zoom up to 19 native, 22 max)
     baseLayersRef.current.satellite = L.tileLayer(
       'https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}',
       {
-        maxNativeZoom: 18,
+        maxNativeZoom: 19,
         maxZoom: 22,
-        attribution: '© ESRI World Imagery / Maxar / Earthstar Geographics',
+        attribution: '© Esri ArcGIS World Imagery / Maxar / Earthstar Geographics',
         className: 'eo-satellite-tiles',
+        noWrap: true,
+        bounds: maxWorldBounds,
       }
     );
+    baseLayersRef.current.arcgis = baseLayersRef.current.satellite;
+    baseLayersRef.current['arcgis-satellite'] = baseLayersRef.current.satellite;
 
     // 3. Sentinel-1 SAR Radar Composite
     baseLayersRef.current.sar = L.tileLayer(
       'https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}',
-      { maxNativeZoom: 18, maxZoom: 22, className: 'eo-sar-radar-tiles' }
+      {
+        maxNativeZoom: 18,
+        maxZoom: 22,
+        className: 'eo-sar-radar-tiles',
+        noWrap: true,
+        bounds: maxWorldBounds,
+      }
     );
 
-    // 4. Hydrographic & Nautical Chart (Carto Voyager)
+    // 4. Google Earth Ultra-HD Satellite & Marine Infrastructure (Zoom 0-22)
+    // Down to 30cm/pixel: lets operators zoom into water to see actual boats, ships, wakes, piers, and harbor SPMs
     baseLayersRef.current['carto-voyager'] = L.tileLayer(
-      'https://{s}.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}{r}.png',
-      { subdomains: ['a', 'b', 'c', 'd'], maxNativeZoom: 19, maxZoom: 22 }
+      'https://{s}.google.com/vt/lyrs=y&x={x}&y={y}&z={z}',
+      {
+        subdomains: ['mt0', 'mt1', 'mt2', 'mt3'],
+        maxNativeZoom: 21,
+        maxZoom: 22,
+        noWrap: true,
+        bounds: maxWorldBounds,
+        attribution: '© Google Earth / Maxar / Airbus Marine Imagery',
+        className: 'google-earth-satellite-tiles',
+      }
     );
+    baseLayersRef.current['google-satellite'] = baseLayersRef.current['carto-voyager'];
 
     // 5. Tactical Dark Night Chart (Carto Dark)
     baseLayersRef.current['carto-dark'] = L.tileLayer(
       'https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png',
-      { subdomains: ['a', 'b', 'c', 'd'], maxNativeZoom: 19, maxZoom: 22 }
+      {
+        subdomains: ['a', 'b', 'c', 'd'],
+        maxNativeZoom: 19,
+        maxZoom: 22,
+        noWrap: true,
+        bounds: maxWorldBounds,
+      }
     );
 
     baseLayersRef.current.opensea = baseLayersRef.current['carto-voyager'];
@@ -124,11 +185,15 @@ export const LeafletMap: React.FC<LeafletMapProps> = ({
         maxZoom: 19,
         attribution: '© ISRO Bhuvan / Survey of India National Basemap',
         className: 'bhuvan-vector-tiles',
+        noWrap: true,
+        bounds: maxWorldBounds,
       }
     );
 
     seamarksLayerRef.current = L.tileLayer('https://tiles.openseamap.org/seamark/{z}/{x}/{y}.png', {
       maxZoom: 18,
+      noWrap: true,
+      bounds: maxWorldBounds,
     });
 
     const initialLayer = baseLayersRef.current[baseLayer] || baseLayersRef.current.satellite;
@@ -147,6 +212,8 @@ export const LeafletMap: React.FC<LeafletMapProps> = ({
         maxZoom: 22,
         opacity: 0.85,
         attribution: '© ESRI World Boundaries & Places',
+        noWrap: true,
+        bounds: maxWorldBounds,
       }
     );
 
@@ -158,7 +225,28 @@ export const LeafletMap: React.FC<LeafletMapProps> = ({
 
     mapRef.current = map;
 
+    // Ensure map tiles layout and render properly
+    const resizeTimer = window.setTimeout(() => {
+      if (mapRef.current) {
+        map.invalidateSize();
+      }
+    }, 150);
+
+    let resizeObserver: ResizeObserver | null = null;
+    if (containerRef.current && typeof ResizeObserver !== 'undefined') {
+      resizeObserver = new ResizeObserver(() => {
+        if (mapRef.current) {
+          map.invalidateSize();
+        }
+      });
+      resizeObserver.observe(containerRef.current);
+    }
+
     return () => {
+      window.clearTimeout(resizeTimer);
+      if (resizeObserver) {
+        resizeObserver.disconnect();
+      }
       map.remove();
       mapRef.current = null;
     };
@@ -355,12 +443,60 @@ export const LeafletMap: React.FC<LeafletMapProps> = ({
     if (prevScenarioIdRef.current !== curId) {
       prevScenarioIdRef.current = curId;
       if (scenario) {
+        if (searchTargetMarkerRef.current && map) {
+          map.removeLayer(searchTargetMarkerRef.current);
+          searchTargetMarkerRef.current = null;
+        }
         map.flyTo([scenario.lat, scenario.lng], 11, { duration: 1.2 });
       } else {
         map.flyTo([15.5, 79.0], 4.25, { duration: 1.2 });
       }
     }
   }, [scenario?.id, scenario?.lat, scenario?.lng]);
+
+  // Search Target Navigation: Fly to searched port, strait, coordinate, or vessel with tactical pulse marker
+  useEffect(() => {
+    const map = mapRef.current;
+    if (!map || !targetLocation) return;
+
+    map.flyTo([targetLocation.lat, targetLocation.lng], targetLocation.zoom || 12, { duration: 1.5 });
+
+    if (searchTargetMarkerRef.current) {
+      map.removeLayer(searchTargetMarkerRef.current);
+      searchTargetMarkerRef.current = null;
+    }
+
+    const pinIcon = L.divIcon({
+      className: 'gis-search-target-pin-wrap',
+      html: `
+        <div class="search-target-pin">
+          <div class="search-target-pulse"></div>
+          <div class="search-target-dot"></div>
+          <div class="search-target-badge">${targetLocation.title}</div>
+        </div>
+      `,
+      iconSize: [0, 0],
+      iconAnchor: [0, 0],
+    });
+
+    const marker = L.marker([targetLocation.lat, targetLocation.lng], { icon: pinIcon, zIndexOffset: 2000 })
+      .bindPopup(`
+        <div class="gis-popup-card">
+          <div class="gis-popup-header" style="border-bottom: 2px solid #0284C7;">
+            ${targetLocation.title}
+          </div>
+          <div class="gis-popup-row"><span>Classification:</span> <strong style="text-transform:uppercase;color:#38BDF8;">${targetLocation.category || 'MARITIME LOCATION'}</strong></div>
+          <div class="gis-popup-row"><span>Coordinates:</span> <strong>${targetLocation.lat.toFixed(4)}°N, ${targetLocation.lng.toFixed(4)}°E</strong></div>
+          ${targetLocation.sub ? `<div class="gis-popup-row"><span>Details:</span> <span>${targetLocation.sub}</span></div>` : ''}
+        </div>
+      `);
+
+    marker.addTo(map);
+    setTimeout(() => {
+      marker.openPopup();
+    }, 1600);
+    searchTargetMarkerRef.current = marker;
+  }, [targetLocation]);
 
   // Render REAL satellite imagery picture, ML-predicted oil spill, past origin, and future drift forecast
   useEffect(() => {
@@ -370,8 +506,9 @@ export const LeafletMap: React.FC<LeafletMapProps> = ({
 
     group.clearLayers();
 
-    // ── 1. RENDER REAL SATELLITE IMAGERY DRAPES & BONN-TIERED OIL SLICKS FOR ALL 4 INCIDENTS ──
-    Object.entries(SCENARIOS).forEach(([key, sc]) => {
+    // ── 1. RENDER REAL SATELLITE IMAGERY DRAPES & BONN-TIERED OIL SLICKS FOR ALL INCIDENTS ──
+    const activeScenarios = scenarios && Object.keys(scenarios).length > 0 ? scenarios : SCENARIOS;
+    Object.entries(activeScenarios).forEach(([key, sc]) => {
       const isActive = scenario ? sc.id === scenario.id : false;
 
       const centerLat = sc.lat;
@@ -384,10 +521,10 @@ export const LeafletMap: React.FC<LeafletMapProps> = ({
         [centerLat + deltaLat, centerLng + deltaLng],
       ];
 
-      // Default to Photorealistic Optical True Color (Natural deep ocean with iridescent oil sheen)
-      let imageryFile = `/imagery/tc_${key}.png`;
-      let layerLabel = 'Sentinel-2A MSI Natural True Color with Surface Sheen';
-      let sensorDesc = 'Visible ocean surface showing specular sun-glint on spreading iridescent oil film.';
+      // Default to Sentinel-1 SAR Radar Backscatter (Microwave Capillary Damping)
+      let imageryFile = `/imagery/sar_${key}.png`;
+      let layerLabel = 'Sentinel-1A C-SAR IW GRD Calibrated Backscatter (VV Decibels)';
+      let sensorDesc = 'Capillary Wave Damping (Δσ0 = -8.40 dB). Dark slick crater against rough ocean speckle.';
 
       if (selectedCopernicusLayer === 'sar-vv') {
         imageryFile = `/imagery/sar_${key}.png`;
@@ -419,8 +556,9 @@ export const LeafletMap: React.FC<LeafletMapProps> = ({
         sensorDesc = 'm-chi polarimetric decomposition distinguishing oil slick from look-alike low-wind areas.';
       }
 
-      // Add satellite imagery drape ONLY if showOverlay is enabled
-      if (showOverlay) {
+      // Add satellite imagery drape ONLY if showOverlay is enabled AND scenario has a rendered image asset
+      const hasImageFile = ['INC-001', 'INC-002', 'INC-003', 'INC-004'].includes(key);
+      if (showOverlay && hasImageFile) {
         const satelliteDrape = L.imageOverlay(imageryFile, imageryBounds, {
           opacity: layerOpacity,
           interactive: true,
@@ -430,11 +568,11 @@ export const LeafletMap: React.FC<LeafletMapProps> = ({
 
         satelliteDrape.bindPopup(`
           <div class="gis-popup-card">
-            <div class="gis-popup-header">${sc.title} — ${layerLabel}</div>
-            <div class="gis-popup-row"><span>Sensor:</span> <strong>${selectedCopernicusLayer === 'nisar-ls' && isActive ? 'ISRO NISAR L-SAR + S-SAR (242km SweepSAR)' : selectedCopernicusLayer === 'eos-04' && isActive ? 'ISRO EOS-04 C-SAR Circular Pol' : selectedCopernicusLayer === 'true-color' || selectedCopernicusLayer === 'swir-oil' || selectedCopernicusLayer === 'false-color' ? 'Sentinel-2 MSI Optical' : 'Sentinel-1 C-SAR IW GRD'}</strong></div>
-            <div class="gis-popup-row"><span>Physical Signal:</span> <strong>${sensorDesc}</strong></div>
-            <div class="gis-popup-row"><span>Ground Resolution:</span> <strong>10m x 10m Ultra-HD (RTC Calibrated)</strong></div>
-            <div class="gis-popup-row"><span>Incident Status:</span> <strong style="color: ${sc.oilColor || '#00E5FF'}">${sc.sev}</strong></div>
+            <div class="gis-popup-header" style="color: #00E5FF; border-bottom: 1.5px solid rgba(0, 229, 255, 0.5);">${sc.title} — ${layerLabel}</div>
+            <div class="gis-popup-row"><span style="color:#94A3B8;">Sensor:</span> <strong style="color:#F1F5F9;">${selectedCopernicusLayer === 'nisar-ls' && isActive ? 'ISRO NISAR L-SAR + S-SAR (242km SweepSAR)' : selectedCopernicusLayer === 'eos-04' && isActive ? 'ISRO EOS-04 C-SAR Circular Pol' : selectedCopernicusLayer === 'true-color' || selectedCopernicusLayer === 'swir-oil' || selectedCopernicusLayer === 'false-color' ? 'Sentinel-2 MSI Optical' : 'Sentinel-1 C-SAR IW GRD'}</strong></div>
+            <div class="gis-popup-row"><span style="color:#94A3B8;">Physical Signal:</span> <strong style="color:#F1F5F9;">${sensorDesc}</strong></div>
+            <div class="gis-popup-row"><span style="color:#94A3B8;">Ground Resolution:</span> <strong style="color:#38BDF8;">10m x 10m Ultra-HD (RTC Calibrated)</strong></div>
+            <div class="gis-popup-row"><span style="color:#94A3B8;">Incident Status:</span> <strong style="color: ${sc.oilColor || '#00E5FF'};">${sc.sev}</strong></div>
             ${!isActive ? `<div style="margin-top:8px;"><button class="btn btn-sm btn-accent w-full" style="width:100%;cursor:pointer;padding:6px 8px;font-size:11px;font-weight:700;border-radius:4px;background:#00E5FF;color:#0A0F1D;border:none;" onclick="window.dispatchEvent(new CustomEvent('switch-scenario', { detail: '${key}' }))">Focus Incident</button></div>` : ''}
           </div>
         `);
@@ -467,13 +605,13 @@ export const LeafletMap: React.FC<LeafletMapProps> = ({
             className: isCore ? 'gis-slick-core' : 'gis-slick-sheen',
           }).bindPopup(`
             <div class="gis-popup-card">
-              <div class="gis-popup-header">${isCore ? 'HEAVY VISCOUS EMULSION CORE' : 'IRIDESCENT METALLIC SHEEN'}</div>
-              <div class="gis-popup-row"><span>Incident:</span> <strong>${sc.title} (${sc.id})</strong></div>
-              <div class="gis-popup-row"><span>Layer Classification:</span> <strong>${isCore ? 'Bonn Code 4/5 (Continuous Emulsion)' : 'Bonn Code 1/2 (Rainbow Sheen)'}</strong></div>
-              <div class="gis-popup-row"><span>Measured Surface Area:</span> <strong>${poly.area_km2} km² (${(poly.area_km2 * 100).toFixed(0)} Hectares)</strong></div>
-              <div class="gis-popup-row"><span>U-Net Confidence:</span> <strong>${(poly.confidence * 100).toFixed(1)}%</strong></div>
-              <div class="gis-popup-row"><span>SAR Radar Damping:</span> <strong style="color:#16A34A;">Δσ0 = ${poly.mean_damping_db} dB</strong></div>
-              <div class="gis-popup-row"><span>Estimated Volume:</span> <strong>${isCore ? '~12.8 Metric Tons (~94 bbls)' : '~1.4 Metric Tons'}</strong></div>
+              <div class="gis-popup-header" style="color: ${isCore ? '#F59E0B' : '#38BDF8'}; border-bottom: 1.5px solid ${isCore ? '#F59E0B' : '#38BDF8'};">${isCore ? 'HEAVY VISCOUS EMULSION CORE' : 'IRIDESCENT METALLIC SHEEN'}</div>
+              <div class="gis-popup-row"><span style="color:#94A3B8;">Incident:</span> <strong style="color:#F1F5F9;">${sc.title} (${sc.id})</strong></div>
+              <div class="gis-popup-row"><span style="color:#94A3B8;">Layer Classification:</span> <strong style="color:#F59E0B;">${isCore ? 'Bonn Code 4/5 (Continuous Emulsion)' : 'Bonn Code 1/2 (Rainbow Sheen)'}</strong></div>
+              <div class="gis-popup-row"><span style="color:#94A3B8;">Measured Surface Area:</span> <strong style="color:#38BDF8;">${poly.area_km2} km² (${(poly.area_km2 * 100).toFixed(0)} Hectares)</strong></div>
+              <div class="gis-popup-row"><span style="color:#94A3B8;">U-Net Confidence:</span> <strong style="color:#10B981;">${(poly.confidence * 100).toFixed(1)}%</strong></div>
+              <div class="gis-popup-row"><span style="color:#94A3B8;">SAR Radar Damping:</span> <strong style="color:#16A34A;">Δσ0 = ${poly.mean_damping_db} dB</strong></div>
+              <div class="gis-popup-row"><span style="color:#94A3B8;">Estimated Volume:</span> <strong style="color:#F1F5F9;">${isCore ? '~12.8 Metric Tons (~94 bbls)' : '~1.4 Metric Tons'}</strong></div>
               ${!isActive ? `<div style="margin-top:8px;"><button class="btn btn-sm btn-accent w-full" style="width:100%;cursor:pointer;padding:6px 8px;font-size:11px;font-weight:700;border-radius:4px;background:#00E5FF;color:#0A0F1D;border:none;" onclick="window.dispatchEvent(new CustomEvent('switch-scenario', { detail: '${key}' }))">Focus Incident</button></div>` : ''}
             </div>
           `);
@@ -487,12 +625,12 @@ export const LeafletMap: React.FC<LeafletMapProps> = ({
         });
       }
 
-      // ── INCIDENT PLACE INDICATION BEACONS (ALWAYS RENDERED FOR ALL 4 INCIDENTS ACROSS INDIA) ──
+      // ── INCIDENT PLACE INDICATION BEACONS (ALWAYS RENDERED ACROSS INDIA) ──
       const isWestCoast = centerLng < 78.0;
       const placementClass = isWestCoast ? 'placement-left' : 'placement-right';
 
       let shortTitle = sc.title;
-      let badgeColor = '#38BDF8';
+      let badgeColor = sc.oilColor || '#38BDF8';
       if (sc.id.includes('001')) {
         shortTitle = 'Mumbai High Basin';
         badgeColor = isActive ? '#00E5FF' : '#F59E0B';
@@ -505,6 +643,18 @@ export const LeafletMap: React.FC<LeafletMapProps> = ({
       } else if (sc.id.includes('004')) {
         shortTitle = 'Goa Coastal Waters';
         badgeColor = '#FACC15';
+      } else if (sc.id.includes('005')) {
+        shortTitle = 'Gulf of Kutch SPM';
+        badgeColor = '#F97316';
+      } else if (sc.id.includes('006')) {
+        shortTitle = 'Cochin Port Anchorage';
+        badgeColor = '#A855F7';
+      } else if (sc.id.includes('007')) {
+        shortTitle = 'Paradip Offshore Basin';
+        badgeColor = '#EF4444';
+      } else if (sc.id.includes('008')) {
+        shortTitle = 'Lakshadweep 9° Ch';
+        badgeColor = '#06B6D4';
       }
 
       if (isActive) {
@@ -537,12 +687,12 @@ export const LeafletMap: React.FC<LeafletMapProps> = ({
               <div class="gis-popup-header" style="border-bottom: 2px solid #00E5FF;">
                 ${sc.title} (${sc.id})
               </div>
-              <div class="gis-popup-row"><span>Status:</span> <strong style="color:#00E5FF;">ACTIVE INVESTIGATION</strong></div>
-              <div class="gis-popup-row"><span>Coordinates:</span> <strong>${sc.lat.toFixed(4)}°N, ${sc.lng.toFixed(4)}°E</strong></div>
-              <div class="gis-popup-row"><span>Severity:</span> <strong style="color:#EF4444;">${sc.sev}</strong></div>
-              <div class="gis-popup-row"><span>Oil Classification:</span> <strong>${sc.oilType}</strong></div>
-              <div class="gis-popup-row"><span>Surface Extent:</span> <strong>${sc.area}</strong></div>
-              <div class="gis-popup-row"><span>Suspect Intercept:</span> <strong>${sc.topVessel}</strong></div>
+              <div class="gis-popup-row"><span style="color:#94A3B8;">Status:</span> <strong style="color:#00E5FF;">ACTIVE INVESTIGATION</strong></div>
+              <div class="gis-popup-row"><span style="color:#94A3B8;">Coordinates:</span> <strong style="color:#F1F5F9;">${sc.lat.toFixed(4)}°N, ${sc.lng.toFixed(4)}°E</strong></div>
+              <div class="gis-popup-row"><span style="color:#94A3B8;">Severity:</span> <strong style="color:#EF4444;">${sc.sev}</strong></div>
+              <div class="gis-popup-row"><span style="color:#94A3B8;">Oil Classification:</span> <strong style="color:#F59E0B;">${sc.oilType}</strong></div>
+              <div class="gis-popup-row"><span style="color:#94A3B8;">Surface Extent:</span> <strong style="color:#38BDF8;">${sc.area}</strong></div>
+              <div class="gis-popup-row"><span style="color:#94A3B8;">Suspect Intercept:</span> <strong style="color:#F1F5F9;">${sc.topVessel}</strong></div>
             </div>
           `);
         group.addLayer(activeMarker);
@@ -578,15 +728,15 @@ export const LeafletMap: React.FC<LeafletMapProps> = ({
           })
           .bindPopup(`
             <div class="gis-popup-card">
-              <div class="gis-popup-header" style="border-bottom: 2px solid ${badgeColor};">
+              <div class="gis-popup-header" style="border-bottom: 2px solid ${badgeColor}; color: ${badgeColor};">
                 ${sc.title} (${sc.id})
               </div>
-              <div class="gis-popup-row"><span>Status:</span> <strong style="color:${badgeColor};">MONITORED INCIDENT</strong></div>
-              <div class="gis-popup-row"><span>Coordinates:</span> <strong>${sc.lat.toFixed(4)}°N, ${sc.lng.toFixed(4)}°E</strong></div>
-              <div class="gis-popup-row"><span>Severity:</span> <strong style="color:${badgeColor};">${sc.sev}</strong></div>
-              <div class="gis-popup-row"><span>Oil Classification:</span> <strong>${sc.oilType}</strong></div>
-              <div class="gis-popup-row"><span>Surface Extent:</span> <strong>${sc.area}</strong></div>
-              <div class="gis-popup-row"><span>Primary Suspect:</span> <strong>${sc.topVessel}</strong></div>
+              <div class="gis-popup-row"><span style="color:#94A3B8;">Status:</span> <strong style="color:${badgeColor};">MONITORED INCIDENT</strong></div>
+              <div class="gis-popup-row"><span style="color:#94A3B8;">Coordinates:</span> <strong style="color:#F1F5F9;">${sc.lat.toFixed(4)}°N, ${sc.lng.toFixed(4)}°E</strong></div>
+              <div class="gis-popup-row"><span style="color:#94A3B8;">Severity:</span> <strong style="color:${badgeColor};">${sc.sev}</strong></div>
+              <div class="gis-popup-row"><span style="color:#94A3B8;">Oil Classification:</span> <strong style="color:#F59E0B;">${sc.oilType}</strong></div>
+              <div class="gis-popup-row"><span style="color:#94A3B8;">Surface Extent:</span> <strong style="color:#38BDF8;">${sc.area}</strong></div>
+              <div class="gis-popup-row"><span style="color:#94A3B8;">Primary Suspect:</span> <strong style="color:#F1F5F9;">${sc.topVessel}</strong></div>
               <div style="margin-top: 10px;">
                 <button class="btn btn-sm btn-accent w-full" style="width: 100%; cursor: pointer; padding: 6px 10px; font-size: 11px; font-weight: 700; border-radius: 4px; background: #00E5FF; color: #0A0F1D; border: none;" onclick="window.dispatchEvent(new CustomEvent('switch-scenario', { detail: '${key}' }))">
                   Investigate Incident
@@ -656,7 +806,14 @@ export const LeafletMap: React.FC<LeafletMapProps> = ({
         color: '#00E5FF',
         weight: 2.0,
         dashArray: '5, 5',
-      }).bindPopup(`<b>Major Dispersion Axis: ${isChennai ? '3.2 km' : '4.65 km'}</b><br>Bearing: ${isChennai ? '020° NNE' : '248° WSW'} (Current-driven elongation)`);
+      }).bindPopup(`
+        <div class="gis-popup-card" style="min-width: 220px;">
+          <div class="gis-popup-header" style="color: #00E5FF; border-bottom: 1.5px solid rgba(0, 229, 255, 0.5);">MAJOR DISPERSION AXIS</div>
+          <div class="gis-popup-row"><span style="color:#94A3B8;">Elongation Length:</span> <strong style="color:#F1F5F9;">${isChennai ? '3.2 km' : '4.65 km'}</strong></div>
+          <div class="gis-popup-row"><span style="color:#94A3B8;">Bearing:</span> <strong style="color:#00E5FF;">${isChennai ? '020° NNE' : '248° WSW'}</strong></div>
+          <div class="gis-popup-row"><span style="color:#94A3B8;">Mechanism:</span> <strong style="color:#38BDF8;">Current-driven elongation</strong></div>
+        </div>
+      `);
       group.addLayer(majLine);
 
       const minHeadingRad = majHeadingRad + Math.PI / 2;
@@ -673,7 +830,13 @@ export const LeafletMap: React.FC<LeafletMapProps> = ({
         color: '#10B981',
         weight: 1.8,
         dashArray: '4, 4',
-      }).bindPopup(`<b>Minor Cross-Dispersion Axis: ${isChennai ? '1.2 km' : '1.78 km'}</b><br>Turbulent lateral diffusion`);
+      }).bindPopup(`
+        <div class="gis-popup-card" style="min-width: 220px;">
+          <div class="gis-popup-header" style="color: #10B981; border-bottom: 1.5px solid rgba(16, 185, 129, 0.5);">MINOR CROSS-DISPERSION AXIS</div>
+          <div class="gis-popup-row"><span style="color:#94A3B8;">Diffusion Width:</span> <strong style="color:#F1F5F9;">${isChennai ? '1.2 km' : '1.78 km'}</strong></div>
+          <div class="gis-popup-row"><span style="color:#94A3B8;">Mechanism:</span> <strong style="color:#38BDF8;">Turbulent lateral diffusion</strong></div>
+        </div>
+      `);
       group.addLayer(minLine);
 
       // ── 5. LAGRANGIAN HYDRODYNAMIC MODELING (PAST ORIGIN & FUTURE FORECAST) ──
@@ -782,11 +945,11 @@ export const LeafletMap: React.FC<LeafletMapProps> = ({
       group.addLayer(
         L.marker(vesselPos, { icon: vesselIcon }).bindPopup(`
           <div class="gis-popup-card">
-            <div class="gis-popup-header">OFFENDING VESSEL CANDIDATE</div>
-            <div class="gis-popup-row"><span>Vessel:</span> <strong>${scenario.topVessel}</strong></div>
-            <div class="gis-popup-row"><span>MMSI:</span> <strong>419001234 (Crude Oil Tanker)</strong></div>
-            <div class="gis-popup-row"><span>AIS Gap:</span> <strong style="color:#DC2626;">4h 35m inside origin envelope</strong></div>
-            <div class="gis-popup-row"><span>Attribution Score:</span> <strong>S = ${scenario.scores?.[0] || 0.82}</strong></div>
+            <div class="gis-popup-header" style="color: #EA580C; border-bottom: 1.5px solid rgba(234, 88, 12, 0.5);">OFFENDING VESSEL CANDIDATE</div>
+            <div class="gis-popup-row"><span style="color:#94A3B8;">Vessel:</span> <strong style="color:#F1F5F9;">${scenario.topVessel}</strong></div>
+            <div class="gis-popup-row"><span style="color:#94A3B8;">MMSI:</span> <strong style="color:#38BDF8;">419001234 (Crude Oil Tanker)</strong></div>
+            <div class="gis-popup-row"><span style="color:#94A3B8;">AIS Gap:</span> <strong style="color:#EF4444;">4h 35m inside origin envelope</strong></div>
+            <div class="gis-popup-row"><span style="color:#94A3B8;">Attribution Score:</span> <strong style="color:#F59E0B;">S = ${scenario.scores?.[0] || 0.82}</strong></div>
           </div>
         `)
       );
@@ -818,10 +981,10 @@ export const LeafletMap: React.FC<LeafletMapProps> = ({
       group.addLayer(
         L.marker(driftGeo.originCoord, { icon: originIcon }).bindPopup(`
           <div class="gis-popup-card">
-            <div class="gis-popup-header">RECONSTRUCTED DISCHARGE ORIGIN (T-22h)</div>
-            <div class="gis-popup-row"><span>Estimated Release Time:</span> <strong>06:00 UTC (during AIS silence window)</strong></div>
-            <div class="gis-popup-row"><span>Origin Position:</span> <strong>${driftGeo.originCoord[0].toFixed(4)}°N, ${driftGeo.originCoord[1].toFixed(4)}°E</strong></div>
-            <div class="gis-popup-row"><span>Total Transport Distance:</span> <strong>38.2 km under CMEMS ocean current</strong></div>
+            <div class="gis-popup-header" style="color: #F59E0B; border-bottom: 1.5px solid rgba(245, 158, 11, 0.5);">RECONSTRUCTED DISCHARGE ORIGIN (T-22h)</div>
+            <div class="gis-popup-row"><span style="color:#94A3B8;">Estimated Release Time:</span> <strong style="color:#F1F5F9;">06:00 UTC (during AIS silence window)</strong></div>
+            <div class="gis-popup-row"><span style="color:#94A3B8;">Origin Position:</span> <strong style="color:#00E5FF;">${driftGeo.originCoord[0].toFixed(4)}°N, ${driftGeo.originCoord[1].toFixed(4)}°E</strong></div>
+            <div class="gis-popup-row"><span style="color:#94A3B8;">Total Transport Distance:</span> <strong style="color:#38BDF8;">38.2 km under CMEMS ocean current</strong></div>
           </div>
         `)
       );
@@ -851,11 +1014,11 @@ export const LeafletMap: React.FC<LeafletMapProps> = ({
       group.addLayer(
         L.marker(driftGeo.predictedCoord24h, { icon: forwardIcon }).bindPopup(`
           <div class="gis-popup-card">
-            <div class="gis-popup-header">PREDICTED DRIFT FORECAST (T+24h)</div>
-            <div class="gis-popup-row"><span>Forecast Time:</span> <strong>T+24h (Next 24 Hours Projection)</strong></div>
-            <div class="gis-popup-row"><span>Projected Position:</span> <strong>${driftGeo.predictedCoord24h[0].toFixed(4)}°N, ${driftGeo.predictedCoord24h[1].toFixed(4)}°E</strong></div>
-            <div class="gis-popup-row"><span>Forecast Model:</span> <strong>OpenDrift + CMEMS Hydrodynamic Forecast</strong></div>
-            <div class="gis-popup-row"><span>Spreading Rate:</span> <strong>Estimated plume expansion to ~6.4 km²</strong></div>
+            <div class="gis-popup-header" style="color: #10B981; border-bottom: 1.5px solid rgba(16, 185, 129, 0.5);">PREDICTED DRIFT FORECAST (T+24h)</div>
+            <div class="gis-popup-row"><span style="color:#94A3B8;">Forecast Time:</span> <strong style="color:#F1F5F9;">T+24h (Next 24 Hours Projection)</strong></div>
+            <div class="gis-popup-row"><span style="color:#94A3B8;">Projected Position:</span> <strong style="color:#00E5FF;">${driftGeo.predictedCoord24h[0].toFixed(4)}°N, ${driftGeo.predictedCoord24h[1].toFixed(4)}°E</strong></div>
+            <div class="gis-popup-row"><span style="color:#94A3B8;">Forecast Model:</span> <strong style="color:#10B981;">OpenDrift + CMEMS Hydrodynamic Forecast</strong></div>
+            <div class="gis-popup-row"><span style="color:#94A3B8;">Spreading Rate:</span> <strong style="color:#38BDF8;">Estimated plume expansion to ~6.4 km²</strong></div>
           </div>
         `)
       );

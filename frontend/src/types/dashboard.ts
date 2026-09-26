@@ -30,9 +30,9 @@ export interface CandidateVessel {
   risk: 'CRITICAL' | 'HIGH' | 'MEDIUM' | 'LOW';
 }
 
-export type TabType = 'dashboard' | 'investigation' | 'drift' | 'attribution' | 'evidence' | 'analytics' | 'detection';
+export type TabType = 'dashboard' | 'drift' | 'attribution' | 'evidence' | 'analytics' | 'detection';
 export type DimensionMode = '2D' | '3D';
-export type BaseLayerType = 'bhuvan-satellite' | 'satellite' | 'sar' | 'carto-voyager' | 'carto-dark' | 'sar-vh' | 'opensea' | 'msn' | 'day' | 'dark' | 'bhuvan-vector';
+export type BaseLayerType = 'bhuvan-satellite' | 'satellite' | 'sar' | 'carto-voyager' | 'carto-dark' | 'sar-vh' | 'opensea' | 'msn' | 'day' | 'dark' | 'bhuvan-vector' | 'google-satellite' | 'arcgis' | 'bhuvan';
 
 export type CopernicusLayerId = 'true-color' | 'sar-vv' | 'sar-vh' | 'swir-oil' | 'false-color' | 'ndwi' | 'thermal' | 'nisar-ls' | 'eos-04';
 
@@ -95,6 +95,21 @@ export interface DetectionResult {
   error?: string;
 }
 
+export interface CropBox {
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+}
+
+export interface CropInfo extends CropBox {
+  originalWidth: number;
+  originalHeight: number;
+  isCropped: boolean;
+  aspectRatio: number;
+  wasCenterCropped?: boolean;
+}
+
 export interface SarClassificationResult {
   imageFile: string;
   prediction: 'oil_spill' | 'no_oil' | 'invalid_sar';
@@ -103,6 +118,10 @@ export interface SarClassificationResult {
   gradcamDataUrl?: string;
   errorMessage?: string;
   rejectionReason?: string;
+  segmentationMask?: string;
+  spillAreaPercent?: number;
+  segmentationTimeMs?: number;
+  cropInfo?: CropInfo;
   metrics?: {
     meanBrightness: number;
     brightRatio: number;
@@ -110,3 +129,28 @@ export interface SarClassificationResult {
     isColor: boolean;
   };
 }
+
+export interface SarDriftPayload {
+  imageSrc: string;
+  maskSrc?: string;
+  fileName: string;
+  prediction: 'oil_spill' | 'no_oil' | 'invalid_sar';
+  confidence: number;
+  spillAreaPercent: number;
+  estimatedAreaKm2: number;
+  inferenceTimeMs: number;
+  segmentationTimeMs?: number;
+  timestamp: string;
+  lat: number;
+  lng: number;
+  locationName: string;
+  cropInfo?: CropInfo;
+  metrics?: {
+    meanBrightness?: number;
+    brightRatio?: number;
+    sharpTransitions?: number;
+    isColor?: boolean;
+  };
+}
+
+

@@ -11,18 +11,18 @@ interface MapPanelProps {
   scenario: Scenario | null;
   onUpdateCoords: (coords: string) => void;
   onSelectScenario?: (key: string) => void;
+  scenarios?: Record<string, Scenario>;
+  targetLocation?: {
+    lat: number;
+    lng: number;
+    zoom?: number;
+    title: string;
+    sub?: string;
+    category?: string;
+  } | null;
 }
 
 const COPERNICUS_LAYERS: CopernicusLayerInfo[] = [
-  {
-    id: 'true-color',
-    name: 'True color',
-    bands: 'Based on bands B4, B3, B2',
-    desc: 'Photorealistic natural ocean satellite imagery (Copernicus Browser standard).',
-    badge: 'OPTICAL',
-    badgeColor: '#0284C7',
-    thumbBg: '#1e3a5f',
-  },
   {
     id: 'sar-vv',
     name: 'SAR Decibel (VV Damping)',
@@ -33,6 +33,24 @@ const COPERNICUS_LAYERS: CopernicusLayerInfo[] = [
     thumbBg: '#0f2b38',
   },
   {
+    id: 'sar-vh',
+    name: 'SAR Cross-Pol (VH Mode)',
+    bands: 'Sentinel-1C C-SAR IW GRD',
+    desc: 'Cross-polarized volume scattering and metallic vessel discrimination.',
+    badge: 'RADAR VH',
+    badgeColor: '#0EA5E9',
+    thumbBg: '#0f2738',
+  },
+  {
+    id: 'true-color',
+    name: 'True color',
+    bands: 'Based on bands B4, B3, B2',
+    desc: 'Photorealistic natural ocean satellite imagery (Copernicus Browser standard).',
+    badge: 'OPTICAL',
+    badgeColor: '#0284C7',
+    thumbBg: '#1e3a5f',
+  },
+  {
     id: 'swir-oil',
     name: 'Highlight Optimized (SWIR)',
     bands: 'SWIR B11 (1610nm), B12 (2190nm)',
@@ -41,6 +59,7 @@ const COPERNICUS_LAYERS: CopernicusLayerInfo[] = [
     badgeColor: '#B45309',
     thumbBg: '#3d2508',
   },
+
   {
     id: 'false-color',
     name: 'False color (CIR)',
@@ -69,15 +88,6 @@ const COPERNICUS_LAYERS: CopernicusLayerInfo[] = [
     thumbBg: '#2a144b',
   },
   {
-    id: 'sar-vh',
-    name: 'SAR Cross-Pol (VH Mode)',
-    bands: 'Sentinel-1C C-SAR IW GRD',
-    desc: 'Cross-polarized volume scattering and metallic vessel discrimination.',
-    badge: 'RADAR VH',
-    badgeColor: '#0EA5E9',
-    thumbBg: '#0f2738',
-  },
-  {
     id: 'nisar-ls',
     name: 'ISRO NISAR L+S Dual-Band (DFDI)',
     bands: 'S-band (3.2GHz) + L-band (1.26GHz)',
@@ -97,14 +107,20 @@ const COPERNICUS_LAYERS: CopernicusLayerInfo[] = [
   },
 ];
 
-export const MapPanel: React.FC<MapPanelProps> = ({ scenario, onUpdateCoords, onSelectScenario }) => {
-  const [baseLayer2D, setBaseLayer2D] = useState<BaseLayerType>('satellite');
+export const MapPanel: React.FC<MapPanelProps> = ({
+  scenario,
+  onUpdateCoords,
+  onSelectScenario,
+  scenarios,
+  targetLocation,
+}) => {
+  const [baseLayer2D, setBaseLayer2D] = useState<BaseLayerType>('arcgis');
   const [showSeamarks, setShowSeamarks] = useState<boolean>(true);
-  const [selectedCopernicusLayer, setSelectedCopernicusLayer] = useState<CopernicusLayerId>('true-color');
-  const [activeSatellite, setActiveSatellite] = useState<string>('Sentinel-2A');
+  const [selectedCopernicusLayer, setSelectedCopernicusLayer] = useState<CopernicusLayerId>('sar-vv');
+  const [activeSatellite, setActiveSatellite] = useState<string>('Sentinel-1A');
   const [showSpillOverlay, setShowSpillOverlay] = useState<boolean>(true);
-  const [showIndiaOutline, setShowIndiaOutline] = useState<boolean>(false);
-  const [showEezBoundary, setShowEezBoundary] = useState<boolean>(false);
+  const [showIndiaOutline, setShowIndiaOutline] = useState<boolean>(true);
+  const [showEezBoundary, setShowEezBoundary] = useState<boolean>(true);
   const [satelliteToast, setSatelliteToast] = useState<string | null>(null);
   const [isSideLayersOpen, setIsSideLayersOpen] = useState<boolean>(false);
 
@@ -115,7 +131,7 @@ export const MapPanel: React.FC<MapPanelProps> = ({ scenario, onUpdateCoords, on
     activeSatellite === 'Sentinel-2B' ? 'Sentinel-2B MSI (SWIR)' :
     activeSatellite === 'ISRO NISAR' ? 'ISRO NISAR (L+S)' :
     activeSatellite.includes('EOS-04') ? 'ISRO EOS-04 (Hybrid)' :
-    'Sentinel-2A MSI (Optical)';
+    'Sentinel-1A C-SAR (VV)';
 
   const [layerOpacity, setLayerOpacity] = useState<number>(0.92);
   const [showAiMask, setShowAiMask] = useState<boolean>(true);
@@ -138,7 +154,7 @@ export const MapPanel: React.FC<MapPanelProps> = ({ scenario, onUpdateCoords, on
     };
 
     socket.on('drift_completed', handleDriftCompleted);
-    socket.on('system_status', (data) => console.log(data.message));
+    socket.on('system_status', (data: any) => console.log(data.message));
 
     return () => {
       socket.off('drift_completed', handleDriftCompleted);
@@ -155,7 +171,7 @@ export const MapPanel: React.FC<MapPanelProps> = ({ scenario, onUpdateCoords, on
     : 'INC-001'
     : 'INC-001';
 
-  let rawImageSrc = `/imagery/tc_${scenarioKey}.png`;
+  let rawImageSrc = `/imagery/sar_${scenarioKey}.png`;
   if (selectedCopernicusLayer === 'sar-vv') rawImageSrc = `/imagery/sar_${scenarioKey}.png`;
   else if (selectedCopernicusLayer === 'sar-vh') rawImageSrc = `/imagery/vh_${scenarioKey}.png`;
   else if (selectedCopernicusLayer === 'true-color') rawImageSrc = `/imagery/tc_${scenarioKey}.png`;
@@ -183,10 +199,19 @@ export const MapPanel: React.FC<MapPanelProps> = ({ scenario, onUpdateCoords, on
 
   const handleSelectBasemap = (layer: BaseLayerType) => {
     setBaseLayer2D(layer);
-    if (layer === 'satellite') {
-      handleSelectCopernicusLayer('true-color');
+    if (layer === 'bhuvan') {
+      handleSelectCopernicusLayer('sar-vv');
+      setSatelliteToast('🇮🇳 ISRO Bhuvan / Bhoonidhi • Official Indian Government Satellite Map');
+      setTimeout(() => setSatelliteToast(null), 3500);
+    } else if (layer === 'satellite' || layer === 'arcgis') {
+      handleSelectCopernicusLayer('sar-vv');
+      setSatelliteToast('🛰️ ArcGIS World Imagery • High-Res Sub-Meter Satellite (Zoom 19+)');
+      setTimeout(() => setSatelliteToast(null), 3500);
     } else if (layer === 'sar') {
       handleSelectCopernicusLayer('sar-vv');
+    } else if (layer === 'bhuvan-satellite') {
+      setSatelliteToast('🌊 ArcGIS World Ocean Base • Bathymetry & Seabed Relief');
+      setTimeout(() => setSatelliteToast(null), 3500);
     }
   };
 
@@ -311,12 +336,20 @@ export const MapPanel: React.FC<MapPanelProps> = ({ scenario, onUpdateCoords, on
           {/* Basemap Switcher */}
           <div className="map-base-selector" style={{ display: 'flex', background: 'var(--bg-raised)', border: '1px solid var(--border-subtle)', borderRadius: 4, padding: 2 }}>
             <button
-              className={`base-btn ${baseLayer2D === 'satellite' ? 'active' : ''}`}
-              onClick={() => handleSelectBasemap('satellite')}
+              className={`base-btn ${baseLayer2D === 'bhuvan' ? 'active' : ''}`}
+              onClick={() => handleSelectBasemap('bhuvan')}
               style={{ fontSize: 11, padding: '3px 8px', borderRadius: 3 }}
-              title="ESRI World Imagery High-Resolution Satellite"
+              title="Official ISRO Bhuvan & Bhoonidhi Satellite Imagery (Govt. of India / NRSC)"
             >
-              Satellite
+              ISRO Bhuvan
+            </button>
+            <button
+              className={`base-btn ${baseLayer2D === 'satellite' || baseLayer2D === 'arcgis' ? 'active' : ''}`}
+              onClick={() => handleSelectBasemap('arcgis')}
+              style={{ fontSize: 11, padding: '3px 8px', borderRadius: 3 }}
+              title="ArcGIS World Imagery High-Resolution Sub-Meter Satellite (Zoom 19+)"
+            >
+              ArcGIS
             </button>
             <button
               className={`base-btn ${baseLayer2D === 'bhuvan-satellite' ? 'active' : ''}`}
@@ -327,12 +360,12 @@ export const MapPanel: React.FC<MapPanelProps> = ({ scenario, onUpdateCoords, on
               Bathymetry
             </button>
             <button
-              className={`base-btn ${baseLayer2D === 'carto-voyager' || baseLayer2D === 'opensea' ? 'active' : ''}`}
+              className={`base-btn ${baseLayer2D === 'carto-voyager' || baseLayer2D === 'google-satellite' || baseLayer2D === 'opensea' ? 'active' : ''}`}
               onClick={() => handleSelectBasemap('carto-voyager')}
               style={{ fontSize: 11, padding: '3px 8px', borderRadius: 3 }}
-              title="Nautical & Hydrographic Navigation Chart"
+              title="Google Earth Ultra-HD Satellite (Zoom 21 - View real boats, ships, wakes, piers & harbor SPM)"
             >
-              Nautical
+              Google Earth
             </button>
           </div>
 
@@ -897,6 +930,8 @@ export const MapPanel: React.FC<MapPanelProps> = ({ scenario, onUpdateCoords, on
           onUpdateCoords={onUpdateCoords}
           onSelectScenario={onSelectScenario}
           mapRef={leafletMapRef}
+          scenarios={scenarios}
+          targetLocation={targetLocation}
         />
 
         {/* Cartographic Legend (Superhuman Glassmorphic HUD at Bottom-Right) */}

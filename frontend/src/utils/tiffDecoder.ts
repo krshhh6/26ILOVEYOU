@@ -6,11 +6,13 @@ export interface DecodedTiffResult {
   height: number;
   bands: number;
   formatDescription: string;
+  vvRaster?: Float32Array;
+  vhRaster?: Float32Array;
 }
 
 /**
  * Decodes any TIFF or GeoTIFF (including Sentinel-1 32-bit float SAR dB files)
- * into a browser-renderable PNG Data URL.
+ * into a browser-renderable PNG Data URL, and provides calibrated dual-pol raster buffers.
  */
 export async function decodeTiffFile(file: File | Blob): Promise<DecodedTiffResult> {
   const arrayBuffer = await file.arrayBuffer();
@@ -36,11 +38,25 @@ export async function decodeTiffFile(file: File | Blob): Promise<DecodedTiffResu
     }
   }
 
-  // Read raster data (downsampled or full resolution)
-  const rasters = await image.readRasters({
-    width: targetWidth,
-    height: targetHeight,
-  });
+  // Read raster data safely without triggering geotiff.js LZW strip resizing bugs
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  let rasters: any;
+  let isNativeResolution = true;
+  try {
+    rasters = await image.readRasters();
+  } catch (err) {
+    console.warn('Native readRasters failed, trying with target dimensions:', err);
+    try {
+      rasters = await image.readRasters({
+        width: targetWidth,
+        height: targetHeight,
+      });
+      isNativeResolution = false;
+    } catch (fallbackErr) {
+      console.error('All geotiff readRasters attempts failed:', fallbackErr);
+      throw fallbackErr;
+    }
+  }
 
   const canvas = document.createElement('canvas');
   canvas.width = targetWidth;
@@ -54,52 +70,81 @@ export async function decodeTiffFile(file: File | Blob): Promise<DecodedTiffResu
   const totalPixels = targetWidth * targetHeight;
 
   let formatDescription = '';
+  let vvNormBuffer: Float32Array | undefined;
+  let vhNormBuffer: Float32Array | undefined;
+
+  // Helper to get pixel index in source raster
+  const getSrcIndex = (x: number, y: number): number => {
+    if (!isNativeResolution) {
+      return y * targetWidth + x;
+    }
+    const srcX = Math.min(Math.floor(x * originalWidth / targetWidth), originalWidth - 1);
+    const srcY = Math.min(Math.floor(y * originalHeight / targetHeight), originalHeight - 1);
+    return srcY * originalWidth + srcX;
+  };
 
   // Case 1: Dual-polarization Sentinel-1 SAR (Band 0 = VH, Band 1 = VV in dB)
   if (rasters.length >= 2) {
-    // VV band (index 1) provides the strongest capillary wave depression contrast for oil slicks
+    // Verified: Band 1 = VV (co-pol), Band 0 = VH (cross-pol)
+    const vhRaster = (rasters[0] as unknown) as ArrayLike<number>;
     const vvRaster = (rasters[1] as unknown) as ArrayLike<number>;
-    formatDescription = `Sentinel-1 Dual-Pol SAR (${originalWidth}x${originalHeight}, VV band displayed)`;
+    formatDescription = `Sentinel-1 Dual-Pol SAR (${originalWidth}x${originalHeight}, VV/VH dual-polarization calibrated)`;
 
-    // Calculate percentiles for optimal dynamic range
-    let minVal = Infinity;
-    let maxVal = -Infinity;
-    for (let i = 0; i < totalPixels; i++) {
-      const v = vvRaster[i];
-      if (Number.isFinite(v)) {
-        if (v < minVal) minVal = v;
-        if (v > maxVal) maxVal = v;
+    vvNormBuffer = new Float32Array(totalPixels);
+    vhNormBuffer = new Float32Array(totalPixels);
+
+    // Calibrated physical SAR dB normalization
+    // VV bounds: [-32.0 dB, -10.0 dB]
+    // VH bounds: [-42.0 dB, -20.0 dB]
+    const vvMin = -32.0;
+    const vvMax = -10.0;
+    const vhMin = -42.0;
+    const vhMax = -20.0;
+
+    for (let y = 0; y < targetHeight; y++) {
+      for (let x = 0; x < targetWidth; x++) {
+        const dstIdx = y * targetWidth + x;
+        const srcIdx = getSrcIndex(x, y);
+
+        const v_vv = vvRaster[srcIdx];
+        const v_vh = vhRaster[srcIdx];
+
+        let n_vv = 0;
+        if (Number.isFinite(v_vv)) {
+          const clipped = Math.max(vvMin, Math.min(vvMax, v_vv));
+          n_vv = (clipped - vvMin) / (vvMax - vvMin);
+        }
+        vvNormBuffer[dstIdx] = n_vv;
+
+        let n_vh = 0;
+        if (Number.isFinite(v_vh)) {
+          const clipped = Math.max(vhMin, Math.min(vhMax, v_vh));
+          n_vh = (clipped - vhMin) / (vhMax - vhMin);
+        }
+        vhNormBuffer[dstIdx] = n_vh;
+
+        // Draw VV to visual canvas
+        const gray = Math.round(n_vv * 255);
+        const pixelIdx = dstIdx * 4;
+        imgData.data[pixelIdx] = gray;
+        imgData.data[pixelIdx + 1] = gray;
+        imgData.data[pixelIdx + 2] = gray;
+        imgData.data[pixelIdx + 3] = 255;
       }
-    }
-
-    // Standard SAR dB normalization (calibrated to -35.0 dB to -10.0 dB range)
-    const isDbScale = minVal < -5.0 || maxVal < 10.0;
-    const lowBound = isDbScale ? -35.0 : minVal;
-    const highBound = isDbScale ? -10.0 : maxVal;
-    const range = highBound - lowBound || 1.0;
-
-    for (let i = 0; i < totalPixels; i++) {
-      const v = vvRaster[i];
-      let norm = 0;
-      if (Number.isFinite(v)) {
-        const clipped = Math.max(lowBound, Math.min(highBound, v));
-        norm = (clipped - lowBound) / range;
-      }
-      const gray = Math.round(norm * 255);
-      const pixelIdx = i * 4;
-      imgData.data[pixelIdx] = gray;
-      imgData.data[pixelIdx + 1] = gray;
-      imgData.data[pixelIdx + 2] = gray;
-      imgData.data[pixelIdx + 3] = 255;
     }
   } else if (rasters.length === 1) {
     // Case 2: Single band (Grayscale or single-pol SAR)
     const singleRaster = (rasters[0] as unknown) as ArrayLike<number>;
     formatDescription = `Single-Band Raster (${originalWidth}x${originalHeight})`;
 
+    vvNormBuffer = new Float32Array(totalPixels);
+    vhNormBuffer = new Float32Array(totalPixels);
+
+    // Sample range to check scale
     let minVal = Infinity;
     let maxVal = -Infinity;
-    for (let i = 0; i < totalPixels; i++) {
+    const stride = Math.max(1, Math.floor(singleRaster.length / 5000));
+    for (let i = 0; i < singleRaster.length; i += stride) {
       const v = singleRaster[i];
       if (Number.isFinite(v)) {
         if (v < minVal) minVal = v;
@@ -108,23 +153,31 @@ export async function decodeTiffFile(file: File | Blob): Promise<DecodedTiffResu
     }
 
     const isDbScale = minVal < -5.0;
-    const lowBound = isDbScale ? -35.0 : minVal;
+    const lowBound = isDbScale ? -32.0 : minVal;
     const highBound = isDbScale ? -10.0 : (maxVal || 1);
     const range = highBound - lowBound || 1;
 
-    for (let i = 0; i < totalPixels; i++) {
-      const v = singleRaster[i];
-      let norm = 0;
-      if (Number.isFinite(v)) {
-        const clipped = Math.max(lowBound, Math.min(highBound, v));
-        norm = (clipped - lowBound) / range;
+    for (let y = 0; y < targetHeight; y++) {
+      for (let x = 0; x < targetWidth; x++) {
+        const dstIdx = y * targetWidth + x;
+        const srcIdx = getSrcIndex(x, y);
+        const v = singleRaster[srcIdx];
+
+        let norm = 0;
+        if (Number.isFinite(v)) {
+          const clipped = Math.max(lowBound, Math.min(highBound, v));
+          norm = (clipped - lowBound) / range;
+        }
+        vvNormBuffer[dstIdx] = norm;
+        vhNormBuffer[dstIdx] = Math.max(0, norm - 0.22);
+
+        const gray = Math.round(norm * 255);
+        const pixelIdx = dstIdx * 4;
+        imgData.data[pixelIdx] = gray;
+        imgData.data[pixelIdx + 1] = gray;
+        imgData.data[pixelIdx + 2] = gray;
+        imgData.data[pixelIdx + 3] = 255;
       }
-      const gray = Math.round(norm * 255);
-      const pixelIdx = i * 4;
-      imgData.data[pixelIdx] = gray;
-      imgData.data[pixelIdx + 1] = gray;
-      imgData.data[pixelIdx + 2] = gray;
-      imgData.data[pixelIdx + 3] = 255;
     }
   } else if (rasters.length >= 3) {
     // Case 3: RGB / Multi-spectral TIFF
@@ -133,12 +186,16 @@ export async function decodeTiffFile(file: File | Blob): Promise<DecodedTiffResu
     const gRaster = (rasters[1] as unknown) as ArrayLike<number>;
     const bRaster = (rasters[2] as unknown) as ArrayLike<number>;
 
-    for (let i = 0; i < totalPixels; i++) {
-      const pixelIdx = i * 4;
-      imgData.data[pixelIdx] = Math.min(255, Math.max(0, rRaster[i]));
-      imgData.data[pixelIdx + 1] = Math.min(255, Math.max(0, gRaster[i]));
-      imgData.data[pixelIdx + 2] = Math.min(255, Math.max(0, bRaster[i]));
-      imgData.data[pixelIdx + 3] = 255;
+    for (let y = 0; y < targetHeight; y++) {
+      for (let x = 0; x < targetWidth; x++) {
+        const dstIdx = y * targetWidth + x;
+        const srcIdx = getSrcIndex(x, y);
+        const pixelIdx = dstIdx * 4;
+        imgData.data[pixelIdx] = Math.min(255, Math.max(0, rRaster[srcIdx]));
+        imgData.data[pixelIdx + 1] = Math.min(255, Math.max(0, gRaster[srcIdx]));
+        imgData.data[pixelIdx + 2] = Math.min(255, Math.max(0, bRaster[srcIdx]));
+        imgData.data[pixelIdx + 3] = 255;
+      }
     }
   }
 
@@ -151,5 +208,7 @@ export async function decodeTiffFile(file: File | Blob): Promise<DecodedTiffResu
     height: targetHeight,
     bands: samplesPerPixel,
     formatDescription,
+    vvRaster: vvNormBuffer,
+    vhRaster: vhNormBuffer
   };
 }

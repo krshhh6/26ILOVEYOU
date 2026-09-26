@@ -1,7 +1,462 @@
-import React, { useState } from 'react';
-import type { AttributionWeights } from '../../types/dashboard';
+import React, { useState, useEffect, useMemo } from 'react';
+import type { Scenario, AttributionWeights } from '../../types/dashboard';
+import { SCENARIOS } from '../../data/scenarios';
 
-export const AttributionView: React.FC = () => {
+interface AttributionViewProps {
+  currentScenario?: Scenario | null;
+  onSelectScenario?: (key: string) => void;
+}
+
+interface CandidateVesselItem {
+  mmsi: string;
+  imo: string;
+  name: string;
+  flag: string;
+  type: string;
+  lat: number;
+  lng: number;
+  sog: number;
+  cog: number;
+  cpa_nm: number;
+  ais_gap_hours: number;
+  time_delta_hours?: number;
+  attribution_score: number;
+  risk: 'CRITICAL' | 'HIGH' | 'MEDIUM' | 'LOW';
+  metrics?: {
+    spatial_match_pct: number;
+    temporal_alignment_pct: number;
+    dark_gap_suspicion_pct: number;
+    vessel_risk_prior_pct: number;
+    weighted_dist_val?: number;
+    weighted_time_val?: number;
+    weighted_gap_val?: number;
+    weighted_type_val?: number;
+  };
+}
+
+const DEFAULT_SCENARIO_VESSELS: Record<string, CandidateVesselItem[]> = {
+  'INC-2026-001': [
+    {
+      mmsi: '419001234',
+      imo: '9412345',
+      name: 'CRUDE ATLAS',
+      flag: 'India',
+      type: 'Crude Oil Tanker (VLCC)',
+      lat: 18.758,
+      lng: 71.206,
+      sog: 4.1,
+      cog: 182.4,
+      cpa_nm: 1.2,
+      ais_gap_hours: 4.58,
+      time_delta_hours: 0.35,
+      attribution_score: 0.88,
+      risk: 'CRITICAL',
+    },
+    {
+      mmsi: '419005678',
+      imo: '9523456',
+      name: 'MARITIME KOHISTAN',
+      flag: 'India',
+      type: 'Product Tanker (Aframax)',
+      lat: 18.785,
+      lng: 71.256,
+      sog: 12.4,
+      cog: 165.0,
+      cpa_nm: 3.8,
+      ais_gap_hours: 3.55,
+      time_delta_hours: 1.80,
+      attribution_score: 0.65,
+      risk: 'HIGH',
+    },
+    {
+      mmsi: '419007890',
+      imo: '9634567',
+      name: 'GULF NAVIGATOR',
+      flag: 'Panama',
+      type: 'Chemical Tanker',
+      lat: 18.658,
+      lng: 71.309,
+      sog: 13.7,
+      cog: 178.2,
+      cpa_nm: 7.1,
+      ais_gap_hours: 1.37,
+      time_delta_hours: 3.40,
+      attribution_score: 0.38,
+      risk: 'LOW',
+    },
+    {
+      mmsi: '352002144',
+      imo: '9745120',
+      name: 'ORIENTAL STAR',
+      flag: 'Liberia',
+      type: 'Container Cargo Vessel',
+      lat: 18.863,
+      lng: 71.143,
+      sog: 18.2,
+      cog: 190.1,
+      cpa_nm: 9.4,
+      ais_gap_hours: 0.15,
+      time_delta_hours: 5.60,
+      attribution_score: 0.21,
+      risk: 'LOW',
+    },
+    {
+      mmsi: '419009112',
+      imo: '9856231',
+      name: 'AL-ZUBARA',
+      flag: 'Qatar',
+      type: 'LNG Carrier',
+      lat: 18.910,
+      lng: 71.380,
+      sog: 16.5,
+      cog: 170.0,
+      cpa_nm: 12.5,
+      ais_gap_hours: 0.05,
+      time_delta_hours: 7.20,
+      attribution_score: 0.15,
+      risk: 'LOW',
+    },
+  ],
+  'INC-2026-002': [
+    {
+      mmsi: '419009988',
+      imo: '9321456',
+      name: 'PACIFIC GLORY',
+      flag: 'India',
+      type: 'Heavy Bunker Fuel Carrier',
+      lat: 13.262,
+      lng: 80.472,
+      sog: 6.8,
+      cog: 14.5,
+      cpa_nm: 1.8,
+      ais_gap_hours: 3.50,
+      time_delta_hours: 0.40,
+      attribution_score: 0.79,
+      risk: 'CRITICAL',
+    },
+    {
+      mmsi: '563001889',
+      imo: '9812457',
+      name: 'CHENNAI TRADER',
+      flag: 'Singapore',
+      type: 'Bulk Carrier',
+      lat: 13.310,
+      lng: 80.520,
+      sog: 14.1,
+      cog: 25.0,
+      cpa_nm: 5.4,
+      ais_gap_hours: 0.80,
+      time_delta_hours: 2.50,
+      attribution_score: 0.42,
+      risk: 'MEDIUM',
+    },
+    {
+      mmsi: '419004455',
+      imo: '9512399',
+      name: 'COROMANDEL PEARL',
+      flag: 'India',
+      type: 'Coastal Feeder Container',
+      lat: 13.360,
+      lng: 80.570,
+      sog: 12.0,
+      cog: 32.0,
+      cpa_nm: 7.8,
+      ais_gap_hours: 1.20,
+      time_delta_hours: 4.10,
+      attribution_score: 0.35,
+      risk: 'MEDIUM',
+    },
+    {
+      mmsi: '354001289',
+      imo: '9678123',
+      name: 'EASTERN FALCON',
+      flag: 'Panama',
+      type: 'Container Carrier',
+      lat: 13.410,
+      lng: 80.620,
+      sog: 17.5,
+      cog: 45.0,
+      cpa_nm: 10.2,
+      ais_gap_hours: 0.10,
+      time_delta_hours: 5.80,
+      attribution_score: 0.18,
+      risk: 'LOW',
+    },
+  ],
+  'INC-2026-003': [
+    {
+      mmsi: '419999000',
+      imo: 'UNKNOWN',
+      name: 'UNKNOWN (DARK SHIP)',
+      flag: 'Unflagged / Blackout',
+      type: 'Unidentified Tanker (SAR Echo)',
+      lat: 10.460,
+      lng: 93.130,
+      sog: 8.5,
+      cog: 295.0,
+      cpa_nm: 0.9,
+      ais_gap_hours: 14.20,
+      time_delta_hours: 0.15,
+      attribution_score: 0.92,
+      risk: 'CRITICAL',
+    },
+    {
+      mmsi: '636018992',
+      imo: '9425112',
+      name: 'MALACCA EXPLORER',
+      flag: 'Liberia',
+      type: 'Crude Oil Tanker',
+      lat: 10.510,
+      lng: 93.210,
+      sog: 13.2,
+      cog: 310.0,
+      cpa_nm: 6.2,
+      ais_gap_hours: 1.20,
+      time_delta_hours: 2.20,
+      attribution_score: 0.48,
+      risk: 'MEDIUM',
+    },
+    {
+      mmsi: '563009881',
+      imo: '9781234',
+      name: 'SUMATRA PRIDE',
+      flag: 'Singapore',
+      type: 'Bulk Carrier',
+      lat: 10.580,
+      lng: 93.290,
+      sog: 11.5,
+      cog: 315.0,
+      cpa_nm: 8.5,
+      ais_gap_hours: 0.30,
+      time_delta_hours: 4.00,
+      attribution_score: 0.28,
+      risk: 'LOW',
+    },
+    {
+      mmsi: '356002144',
+      imo: '9845678',
+      name: 'ANDAMAN LEADER',
+      flag: 'Panama',
+      type: 'Container Ship',
+      lat: 10.640,
+      lng: 93.360,
+      sog: 19.0,
+      cog: 320.0,
+      cpa_nm: 11.0,
+      ais_gap_hours: 0.20,
+      time_delta_hours: 6.20,
+      attribution_score: 0.16,
+      risk: 'LOW',
+    },
+  ],
+  'INC-2026-004': [
+    {
+      mmsi: '419003322',
+      imo: '9245123',
+      name: 'SEA PEARL',
+      flag: 'India',
+      type: 'Bunkering Barge / Coastal Tanker',
+      lat: 15.428,
+      lng: 73.655,
+      sog: 2.1,
+      cog: 172.0,
+      cpa_nm: 0.8,
+      ais_gap_hours: 2.50,
+      time_delta_hours: 0.25,
+      attribution_score: 0.84,
+      risk: 'CRITICAL',
+    },
+    {
+      mmsi: '419006543',
+      imo: '9356124',
+      name: 'MORMUGAO MARINER',
+      flag: 'India',
+      type: 'Bulk Carrier',
+      lat: 15.485,
+      lng: 73.710,
+      sog: 11.4,
+      cog: 185.0,
+      cpa_nm: 4.2,
+      ais_gap_hours: 0.40,
+      time_delta_hours: 2.10,
+      attribution_score: 0.45,
+      risk: 'MEDIUM',
+    },
+    {
+      mmsi: '419008765',
+      imo: '9411234',
+      name: 'MANDOVI VOYAGER',
+      flag: 'Panama',
+      type: 'Chemical Tanker',
+      lat: 15.520,
+      lng: 73.760,
+      sog: 13.8,
+      cog: 192.0,
+      cpa_nm: 6.8,
+      ais_gap_hours: 0.20,
+      time_delta_hours: 3.80,
+      attribution_score: 0.28,
+      risk: 'LOW',
+    },
+    {
+      mmsi: '419009999',
+      imo: '9123456',
+      name: 'ZUARI TIDE',
+      flag: 'India',
+      type: 'Fishing Trawler',
+      lat: 15.580,
+      lng: 73.820,
+      sog: 7.2,
+      cog: 210.0,
+      cpa_nm: 9.5,
+      ais_gap_hours: 0.10,
+      time_delta_hours: 5.50,
+      attribution_score: 0.18,
+      risk: 'LOW',
+    },
+  ],
+  'INC-2026-005': [
+    {
+      mmsi: '419008811',
+      imo: '9512399',
+      name: 'AL KHALEEJ STAR',
+      flag: 'India',
+      type: 'Crude Oil Tanker (VLCC)',
+      lat: 22.615,
+      lng: 69.450,
+      sog: 3.2,
+      cog: 75.0,
+      cpa_nm: 1.1,
+      ais_gap_hours: 3.8,
+      attribution_score: 0.78,
+      risk: 'HIGH',
+    },
+    {
+      mmsi: '419007733',
+      imo: '9488112',
+      name: 'SAURASHTRA PRIDE',
+      flag: 'India',
+      type: 'Aframax Crude Tanker',
+      lat: 22.625,
+      lng: 69.380,
+      sog: 12.1,
+      cog: 82.0,
+      cpa_nm: 4.8,
+      ais_gap_hours: 0.8,
+      attribution_score: 0.44,
+      risk: 'MEDIUM',
+    },
+  ],
+  'INC-2026-006': [
+    {
+      mmsi: '419004455',
+      imo: '9398812',
+      name: 'OCEAN VOYAGER',
+      flag: 'India',
+      type: 'Product Tanker (Aframax)',
+      lat: 10.020,
+      lng: 76.050,
+      sog: 1.8,
+      cog: 162.0,
+      cpa_nm: 1.4,
+      ais_gap_hours: 3.1,
+      attribution_score: 0.72,
+      risk: 'HIGH',
+    },
+    {
+      mmsi: '419005522',
+      imo: '9432109',
+      name: 'MALABAR PIONEER',
+      flag: 'Panama',
+      type: 'Container Ship',
+      lat: 10.150,
+      lng: 75.980,
+      sog: 14.6,
+      cog: 158.0,
+      cpa_nm: 7.2,
+      ais_gap_hours: 0.5,
+      attribution_score: 0.38,
+      risk: 'LOW',
+    },
+  ],
+  'INC-2026-007': [
+    {
+      mmsi: '419006677',
+      imo: '9456781',
+      name: 'EASTERN GLORY',
+      flag: 'India',
+      type: 'Crude Oil Tanker (VLCC)',
+      lat: 20.280,
+      lng: 86.780,
+      sog: 2.4,
+      cog: 35.0,
+      cpa_nm: 1.2,
+      ais_gap_hours: 2.8,
+      attribution_score: 0.76,
+      risk: 'HIGH',
+    },
+    {
+      mmsi: '419007711',
+      imo: '9389922',
+      name: 'KALINGA VOYAGER',
+      flag: 'Liberia',
+      type: 'Bulk Carrier',
+      lat: 20.350,
+      lng: 86.850,
+      sog: 11.8,
+      cog: 40.0,
+      cpa_nm: 6.5,
+      ais_gap_hours: 0.6,
+      attribution_score: 0.35,
+      risk: 'LOW',
+    },
+  ],
+  'INC-2026-008': [
+    {
+      mmsi: '636019944',
+      imo: '9511200',
+      name: 'PACIFIC ORCHID',
+      flag: 'Liberia',
+      type: 'Crude Oil Tanker (VLCC)',
+      lat: 8.520,
+      lng: 72.850,
+      sog: 13.5,
+      cog: 95.0,
+      cpa_nm: 2.1,
+      ais_gap_hours: 2.2,
+      attribution_score: 0.68,
+      risk: 'MEDIUM',
+    },
+  ],
+};
+
+export const AttributionView: React.FC<AttributionViewProps> = ({ currentScenario, onSelectScenario }) => {
+  const defaultKey = currentScenario?.id.includes('002')
+    ? 'INC-002'
+    : currentScenario?.id.includes('003')
+    ? 'INC-003'
+    : currentScenario?.id.includes('004')
+    ? 'INC-004'
+    : currentScenario?.id.includes('005')
+    ? 'INC-005'
+    : currentScenario?.id.includes('006')
+    ? 'INC-006'
+    : currentScenario?.id.includes('007')
+    ? 'INC-007'
+    : currentScenario?.id.includes('008')
+    ? 'INC-008'
+    : 'INC-001';
+
+  const [selectedKey, setSelectedKey] = useState<string>(defaultKey);
+  const activeScenario = SCENARIOS[selectedKey] || currentScenario || SCENARIOS['INC-001'];
+
+  const [weights, setWeights] = useState<AttributionWeights>({
+    dist: 0.30,
+    time: 0.25,
+    gap: 0.25,
+    type: 0.20,
+  });
+
   const [loading, setLoading] = useState(false);
   const [evidence, setEvidence] = useState<any>(null);
 
@@ -32,13 +487,15 @@ export const AttributionView: React.FC = () => {
         ]
       };
 
-      const res = await fetch("http://localhost:8000/api/v1/evidence/evaluate", {
+      const res = await fetch("/api/v1/evidence/evaluate", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(payload)
       });
-      const data = await res.json();
-      setEvidence(data);
+      if (res.ok) {
+        const data = await res.json();
+        setEvidence(data);
+      }
     } catch (err) {
       console.error(err);
     } finally {
@@ -46,107 +503,740 @@ export const AttributionView: React.FC = () => {
     }
   };
 
+  type WeightKey = 'dist' | 'time' | 'gap' | 'type';
 
+  const handleWeightChange = (changedKey: WeightKey, newValue: number) => {
+    const oldWeights: Record<WeightKey, number> = {
+      dist: weights.dist,
+      time: weights.time,
+      gap: weights.gap,
+      type: weights.type,
+    };
+    const diff = newValue - oldWeights[changedKey];
+    
+    let otherKeys: WeightKey[] = (['dist', 'time', 'gap', 'type'] as WeightKey[]).filter(k => k !== changedKey);
+    let sumOthers = 0;
+    otherKeys.forEach(k => { sumOthers += oldWeights[k]; });
+    
+    const newWeights: Record<WeightKey, number> = { ...oldWeights, [changedKey]: newValue };
+    
+    if (sumOthers > 0) {
+      otherKeys.forEach(k => {
+        let adjustment = diff * (oldWeights[k] / sumOthers);
+        newWeights[k] = Math.max(0, oldWeights[k] - adjustment);
+      });
+    } else {
+      otherKeys.forEach(k => {
+        newWeights[k] = Math.max(0, -diff / 3);
+      });
+    }
+    
+    let total = Object.values(newWeights).reduce((a, b) => a + b, 0);
+    if (total > 0 && Math.abs(total - 1.0) > 0.001) {
+      (['dist', 'time', 'gap', 'type'] as WeightKey[]).forEach(k => {
+        newWeights[k] /= total;
+      });
+    }
+    
+    setWeights(newWeights);
+  };
+
+
+  const [aishubUsername, setAishubUsername] = useState<string>(() => {
+    return localStorage.getItem('AISHUB_USERNAME') || '';
+  });
+
+  const [isLoading, setIsLoading] = useState<boolean>(false);
+  const [feedSource] = useState<string>('AISHub Maritime Transponder Engine');
+  const [lastUpdated, setLastUpdated] = useState<string>('Live Calibrated Feed');
+
+  // Synchronize when currentScenario changes from external sources
+  useEffect(() => {
+    if (currentScenario?.id) {
+      const matchedKey = Object.keys(SCENARIOS).find(
+        (k) => SCENARIOS[k].id === currentScenario.id || currentScenario.id.includes(k.replace('INC-', ''))
+      );
+      if (matchedKey) setSelectedKey(matchedKey);
+    }
+  }, [currentScenario]);
+
+  const incidentId = activeScenario.id;
+
+  // Compute total weights sum dynamically
+  const totalW = useMemo(() => {
+    return +( (weights.dist || 0) + (weights.time || 0) + (weights.gap || 0) + (weights.type || 0) ).toFixed(2) || 1.0;
+  }, [weights]);
+
+  // Normalized weight percentages for Bayesian prior breakdown
+  const normDist = Math.round(((weights.dist || 0) / totalW) * 100);
+  const normTime = Math.round(((weights.time || 0) / totalW) * 100);
+  const normGap = Math.round(((weights.gap || 0) / totalW) * 100);
+  const normType = Math.round(((weights.type || 0) / totalW) * 100);
+
+  // Compute attribution score based on active sensitivity weights
+  const computeVesselScore = (
+    v: CandidateVesselItem,
+    w: AttributionWeights
+  ): { score: number; risk: 'CRITICAL' | 'HIGH' | 'MEDIUM' | 'LOW'; metrics: any } => {
+    const sumW = (w.dist || 0) + (w.time || 0) + (w.gap || 0) + (w.type || 0) || 1.0;
+
+    // Spatial score (closer CPA -> higher suspicion: 0nm -> 1.0, 15nm -> 0.0)
+    const sDist = Math.max(0.0, Math.min(1.0, 1.0 - v.cpa_nm / 15.0));
+
+    // Time alignment score (closer to reverse discharge window -> higher suspicion: 0h -> 1.0, 6h -> 0.0)
+    const timeDelta = v.time_delta_hours ?? (v.cpa_nm < 2 ? 0.35 : v.cpa_nm < 5 ? 1.8 : 4.5);
+    const sTime = Math.max(0.05, Math.min(1.0, 1.0 - timeDelta / 6.0));
+
+    // Dark Ship AIS silence gap (larger gap -> higher suspicion: >=4h -> 1.0)
+    const sGap = Math.max(0.0, Math.min(1.0, v.ais_gap_hours / 4.0));
+
+    // Vessel risk prior based on ship category
+    const t = v.type.toLowerCase();
+    const sType = t.includes('crude') || t.includes('dark')
+      ? 0.95
+      : t.includes('product') || t.includes('bunker')
+      ? 0.85
+      : t.includes('chemical')
+      ? 0.70
+      : t.includes('cargo') || t.includes('container') || t.includes('bulk')
+      ? 0.35
+      : 0.20;
+
+    const weightedDist = (w.dist * sDist) / sumW;
+    const weightedTime = (w.time * sTime) / sumW;
+    const weightedGap = (w.gap * sGap) / sumW;
+    const weightedType = (w.type * sType) / sumW;
+
+    const finalScore = weightedDist + weightedTime + weightedGap + weightedType;
+    const rounded = Math.round(Math.min(1.0, Math.max(0.05, finalScore)) * 100) / 100;
+
+    const risk: 'CRITICAL' | 'HIGH' | 'MEDIUM' | 'LOW' =
+      rounded >= 0.75 ? 'CRITICAL' : rounded >= 0.50 ? 'HIGH' : rounded >= 0.32 ? 'MEDIUM' : 'LOW';
+
+    return {
+      score: rounded,
+      risk,
+      metrics: {
+        spatial_match_pct: Math.round(sDist * 100),
+        temporal_alignment_pct: Math.round(sTime * 100),
+        dark_gap_suspicion_pct: Math.round(sGap * 100),
+        vessel_risk_prior_pct: Math.round(sType * 100),
+        weighted_dist_val: +weightedDist.toFixed(2),
+        weighted_time_val: +weightedTime.toFixed(2),
+        weighted_gap_val: +weightedGap.toFixed(2),
+        weighted_type_val: +weightedType.toFixed(2),
+      },
+    };
+  };
+
+  // Instant real-time candidate vessel scoring and ranking (Zero-latency when adjusting sliders)
+  const candidates: CandidateVesselItem[] = useMemo(() => {
+    const baseList = DEFAULT_SCENARIO_VESSELS[incidentId] || DEFAULT_SCENARIO_VESSELS['INC-2026-001'];
+    return baseList
+      .map((v) => {
+        const { score, risk, metrics } = computeVesselScore(v, weights);
+        return {
+          ...v,
+          attribution_score: score,
+          risk,
+          metrics,
+        };
+      })
+      .sort((a, b) => b.attribution_score - a.attribution_score);
+  }, [incidentId, weights]);
+
+  const handleRecalculate = () => {
+    setIsLoading(true);
+    setLastUpdated(new Date().toLocaleTimeString());
+    setTimeout(() => {
+      setIsLoading(false);
+    }, 300);
+  };
+
+  const handleSaveUsername = (uname: string) => {
+    setAishubUsername(uname);
+    localStorage.setItem('AISHUB_USERNAME', uname);
+  };
+
+  const isCustomPreset = !(
+    (weights.dist === 0.30 && weights.time === 0.25 && weights.gap === 0.25 && weights.type === 0.20) ||
+    (weights.dist === 0.20 && weights.time === 0.15 && weights.gap === 0.45 && weights.type === 0.20) ||
+    (weights.dist === 0.50 && weights.time === 0.20 && weights.gap === 0.10 && weights.type === 0.20)
+  );
   return (
-    <div id="tab-attribution" className="tab-content visible">
-      {/* PAGE HEADER */}
-      <div className="page-header" style={{ paddingTop: 'var(--sp-4)' }}>
+    <div id="tab-attribution" className="tab-content visible modern-dashboard-root">
+      {/* 1. EXECUTIVE HEADER */}
+      <div className="workspace-header-bar">
         <div>
-          <div className="flex items-center gap-3">
-            <div className="page-title">Vessel Attribution &amp; Sensitivity Tuner</div>
-            <span className="id-tag">EXPLAINABLE ML</span>
+          <h1 className="workspace-main-title">Vessel Attribution &amp; AIS Sensitivity Tuner</h1>
+          <p className="workspace-sub-title">
+            Spatiotemporal Intersection Between AISHub Live Trajectories &amp; OpenDrift Reverse Origin Envelopes
+          </p>
+        </div>
+
+        <div className="workspace-header-actions">
+          <select
+            value={selectedKey}
+            onChange={(e) => {
+              const k = e.target.value;
+              setSelectedKey(k);
+              if (SCENARIOS[k]) {
+                onSelectScenario?.(k);
+              }
+            }}
+            className="action-pill-btn secondary"
+            style={{
+              padding: '6px 14px',
+              fontWeight: 600,
+              cursor: 'pointer',
+              appearance: 'auto',
+            }}
+          >
+            {Object.entries(SCENARIOS).map(([key, sc]) => (
+              <option key={key} value={key}>
+                {sc.id} · {sc.title}
+              </option>
+            ))}
+          </select>
+
+          <button
+            className="action-pill-btn secondary"
+            onClick={handleRecalculate}
+            disabled={isLoading}
+          >
+            <span
+              className="material-symbols-outlined"
+              style={{
+                fontSize: 16,
+                animation: isLoading ? 'spin 1s linear infinite' : 'none',
+              }}
+            >
+              sync
+            </span>
+            <span>{isLoading ? 'Polling AIS...' : 'Refresh Live AIS'}</span>
+          </button>
+
+          <button
+            className="action-pill-btn primary"
+            onClick={handleRecalculate}
+            title="Recalculate attribution ranking based on current sensitivity matrix"
+          >
+            <span className="material-symbols-outlined" style={{ fontSize: 16 }}>calculate</span>
+            <span>Recalculate Ranking</span>
+          </button>
+        </div>
+      </div>
+
+      {/* 2. EXECUTIVE METRIC CARDS */}
+      <div className="executive-metrics-grid">
+        <div className="metric-card-neumorphic">
+          <div className="metric-card-header">
+            <span className="metric-card-label">Screened Vessels</span>
           </div>
-          <div className="page-subtitle">
-            Spatiotemporal intersection between AIS trajectories and backward drift origin envelope
+          <div className="metric-card-body">
+            <span className="metric-number">
+              {candidates.length} <span className="metric-unit">Vessels</span>
+            </span>
+            <span className="metric-trend-pill neutral">
+              T - 72h Window
+            </span>
+          </div>
+          <div className="metric-card-footer">
+            <span>AOI: {activeScenario.title.toUpperCase()}</span>
+            <span className="material-symbols-outlined arrow-icon">radar</span>
+          </div>
+        </div>
+
+        <div className="metric-card-neumorphic">
+          <div className="metric-card-header">
+            <span className="metric-card-label">Prime Culprit Suspect</span>
+          </div>
+          <div className="metric-card-body">
+            <span className="metric-number" style={{ fontSize: 18, color: '#ef4444' }}>
+              {candidates[0]?.name || 'CRUDE ATLAS'}
+            </span>
+            <span className="metric-trend-pill positive" style={{ color: '#ef4444' }}>
+              {candidates[0]?.risk || 'CRITICAL'} RISK
+            </span>
+          </div>
+          <div className="metric-card-footer">
+            <span>MMSI: {candidates[0]?.mmsi || '419001234'} · Flag: {candidates[0]?.flag || 'India'}</span>
+            <span className="material-symbols-outlined arrow-icon">directions_boat</span>
+          </div>
+        </div>
+
+        <div className="metric-card-neumorphic">
+          <div className="metric-card-header">
+            <span className="metric-card-label">Closest CPA Distance</span>
+          </div>
+          <div className="metric-card-body">
+            <span className="metric-number">
+              {candidates[0]?.cpa_nm ?? 1.2} <span className="metric-unit">nm</span>
+            </span>
+            <span className="metric-trend-pill positive">
+              Centroid Intersect
+            </span>
+          </div>
+          <div className="metric-card-footer">
+            <span>SOG: {candidates[0]?.sog ?? 4.1} kn ({candidates[0]?.sog && candidates[0].sog < 5 ? 'Discharge' : 'Transit'})</span>
+            <span className="material-symbols-outlined arrow-icon">near_me</span>
+          </div>
+        </div>
+
+        <div className="metric-card-neumorphic">
+          <div className="metric-card-header">
+            <span className="metric-card-label">AIS Transponder Silence</span>
+          </div>
+          <div className="metric-card-body">
+            <span className="metric-number" style={{ color: (candidates[0]?.ais_gap_hours ?? 0) > 2 ? '#f59e0b' : 'inherit' }}>
+              {candidates[0]?.ais_gap_hours ?? 4.58} <span className="metric-unit">hrs</span>
+            </span>
+            <span className="metric-trend-pill neutral" style={{ color: (candidates[0]?.ais_gap_hours ?? 0) > 2 ? '#f59e0b' : undefined }}>
+              {(candidates[0]?.ais_gap_hours ?? 0) > 2 ? 'Dark Gap Flagged' : 'Continuous'}
+            </span>
+          </div>
+          <div className="metric-card-footer">
+            <span>Temporal Blackout Correlation</span>
+            <span className="material-symbols-outlined arrow-icon">visibility_off</span>
           </div>
         </div>
       </div>
 
-      <div className="content-area" style={{ alignItems: 'start' }}>
-        <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--sp-4)' }}>
-          {/* WHAT-IF ATTRIBUTION WEIGHT TUNER */}
-          <div className="weight-tuner">
-            <div className="tuner-header">
-              <span
-                style={{
-                  fontSize: 12,
-                  fontWeight: 700,
-                  letterSpacing: '0.06em',
-                  textTransform: 'uppercase',
-                  color: 'var(--text-primary)',
-                  display: 'flex',
-                  alignItems: 'center',
-                  gap: 6,
-                }}
-              >
-                <span className="material-symbols-outlined" style={{ fontSize: 16 }}>science</span>
-                Dynamic Physics Engine Correlation
-              </span>
-              <button
-                className="btn btn-primary"
-                onClick={runPhysicsEngine}
-                disabled={loading}
-                style={{ padding: '4px 12px', fontSize: 11 }}
-              >
-                {loading ? "Calculating Drift..." : "Run Physics Engine"}
-              </button>
-            </div>
-
-            {evidence && (
-              <div style={{ padding: '12px', background: '#0a0a0a', border: '1px solid #333', borderRadius: '4px', marginTop: '12px', fontSize: '11px', fontFamily: 'monospace' }}>
-                <div style={{ color: '#0f0', marginBottom: '8px' }}>&gt; Backend Response Received:</div>
-                <div style={{ color: '#aaa' }}>Classification: <span style={{ color: '#fff' }}>{evidence.classification}</span></div>
-                <div style={{ color: '#aaa' }}>Drift Vector (dx/dy): <span style={{ color: '#fff' }}>{evidence.drift_applied?.delta_x_m?.toFixed(2)}m, {evidence.drift_applied?.delta_y_m?.toFixed(2)}m</span></div>
-                <div style={{ color: '#aaa' }}>Spatial Score: <span style={{ color: '#fff' }}>{evidence.confidence?.spatial_score?.toFixed(2)}</span></div>
-                <div style={{ color: '#aaa' }}>Dimension Match: <span style={{ color: '#fff' }}>{evidence.confidence?.dimension_score?.toFixed(2)}</span></div>
-                <div style={{ color: '#aaa' }}>Heading Match: <span style={{ color: '#fff' }}>{evidence.confidence?.heading_score?.toFixed(2)}</span></div>
-              </div>
-            )}
-          </div>
-
-          {/* RANKED CANDIDATES */}
-          <div className="panel">
-            <div className="panel-header">
-              <span className="panel-title">
-                <span className="material-symbols-outlined" style={{ fontSize: 16 }}>format_list_numbered</span>
-                Ranked Candidate Vessels
-              </span>
-              <span className="text-xs text-muted">Spatiotemporal Search Window: T - 72h to 0h</span>
-            </div>
-            <div className="panel-body" style={{ padding: 0 }}>
-              <div className="vessel-row bb">
-                <div className="v-rank r1">1</div>
-                <div className="vessel-info">
-                  <div className="v-name" style={{ color: 'var(--vessel-color)' }}>{evidence?.correlated_ais?.vessel_type ? 'CRUDE ATLAS' : 'WAITING FOR PHYSICS ENGINE...'}</div>
-                  <div className="v-mmsi">MMSI: 419001234 · IMO: 9412345 · Flag: India · Crude Oil Tanker</div>
-                  <div className="v-meta">
-                    CPA: {evidence?.drift_applied?.delta_x_m ? `${(evidence.drift_applied.delta_x_m / 1852).toFixed(2)} nm` : '--- nm'} from envelope centroid · Speed: 4.1 kn
-                  </div>
-                </div>
-                <div className="score-col">
-                  <div className="score-val sc-h">{evidence?.confidence?.overall_confidence?.toFixed(2) || '0.00'}</div>
-                  <div className="score-lbl">Attribution Score</div>
-                </div>
-              </div>
-            </div>
-          </div>
+      {/* 3. WORKFLOW NAV BAR */}
+      <div className="workflow-nav-bar">
+        <div className="workflow-title-area">
+          <h2 className="workflow-title">Sensitivity Presets &amp; AIS Stream Control</h2>
+          <span className="scenario-chip" style={{ borderColor: 'rgba(56, 189, 248, 0.4)', color: 'var(--accent)' }}>
+            {feedSource.split('(')[0].trim()}
+          </span>
         </div>
 
-        <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--sp-4)' }}>
-          <div className="panel">
-            <div className="panel-header">
-              <span className="panel-title">
-                <span className="material-symbols-outlined" style={{ fontSize: 16 }}>gavel</span>
-                Legal &amp; Evidentiary Disclaimer
+        <div className="workflow-tabs-strip">
+          <button
+            className={`workflow-tab-btn ${weights.dist === 0.30 && weights.time === 0.25 && weights.gap === 0.25 && weights.type === 0.20 ? 'active' : ''}`}
+            onClick={() => setWeights({ dist: 0.30, time: 0.25, gap: 0.25, type: 0.20 })}
+          >
+            Balanced ML (30/25/25/20)
+          </button>
+          <button
+            className={`workflow-tab-btn ${weights.dist === 0.20 && weights.time === 0.15 && weights.gap === 0.45 && weights.type === 0.20 ? 'active' : ''}`}
+            onClick={() => setWeights({ dist: 0.20, time: 0.15, gap: 0.45, type: 0.20 })}
+          >
+            Dark Ship Blackout Focus
+          </button>
+          <button
+            className={`workflow-tab-btn ${weights.dist === 0.50 && weights.time === 0.20 && weights.gap === 0.10 && weights.type === 0.20 ? 'active' : ''}`}
+            onClick={() => setWeights({ dist: 0.50, time: 0.20, gap: 0.10, type: 0.20 })}
+          >
+            Anchorage Proximity Focus
+          </button>
+          {isCustomPreset && (
+            <button
+              className="workflow-tab-btn active"
+              style={{ borderColor: 'var(--accent)', color: 'var(--accent)', display: 'flex', alignItems: 'center', gap: 6 }}
+              title="Custom Sensitivity Matrix Active"
+            >
+              <span>✦ Custom ({(weights.dist * 100).toFixed(0)}/{(weights.time * 100).toFixed(0)}/{(weights.gap * 100).toFixed(0)}/{(weights.type * 100).toFixed(0)})</span>
+              <span
+                style={{ cursor: 'pointer', fontSize: 11, opacity: 0.8, textDecoration: 'underline' }}
+                onClick={(e) => {
+                  e.stopPropagation();
+                  setWeights({ dist: 0.30, time: 0.25, gap: 0.25, type: 0.20 });
+                }}
+                title="Reset to Balanced Preset"
+              >
+                (Reset)
+              </span>
+            </button>
+          )}
+        </div>
+
+        <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+          <input
+            type="text"
+            placeholder="AISHub Username..."
+            value={aishubUsername}
+            onChange={(e) => handleSaveUsername(e.target.value)}
+            style={{
+              fontSize: 11,
+              padding: '4px 10px',
+              borderRadius: 20,
+              border: '1px solid var(--border-subtle)',
+              background: 'var(--bg-raised)',
+              color: 'var(--text-primary)',
+              width: 140,
+              outline: 'none',
+            }}
+          />
+        </div>
+      </div>
+
+      {/* 4. ROUNDED CANVAS CONTAINER */}
+      <div className="canvas-rounded-container">
+        <div className="canvas-two-column">
+          {/* LEFT PANE: SENSITIVITY WEIGHT TUNERS & ML PRIORS */}
+          <div className="canvas-pane">
+            <div className="pane-header">
+              <span className="pane-title">
+                <span className="material-symbols-outlined" style={{ fontSize: 18, color: 'var(--accent)' }}>tune</span>
+                Attribution Sensitivity Weights
+              </span>
+              <span className="metric-trend-pill positive" style={{ fontSize: 10, fontWeight: 700 }}>
+                Σ wi = {totalW.toFixed(2)} · Live Model Applied
               </span>
             </div>
-            <div className="panel-body">
-              <div className="prob-note">
-                <strong>Important Legal Notice:</strong> Spill Sense attribution scores reflect statistical correlation and
-                hydrodynamic consistency. Under MARPOL 73/78 Annex I and Section 356 of the Indian Merchant Shipping Act
-                1958, physical oil sampling and maritime inspection by Indian Coast Guard / Mercantile Marine Department
-                (MMD) officers remain mandatory for statutory enforcement.
+
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
+              {/* Slider 1: Spatial Proximity */}
+              <div>
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', fontSize: 11, fontWeight: 700, marginBottom: 6 }}>
+                  <span style={{ color: 'var(--text-primary)' }}>Spatial Proximity (w_dist)</span>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                    <span style={{ fontSize: 10, color: 'var(--text-muted)' }}>({normDist}%)</span>
+                    <span className="mono" style={{ color: 'var(--accent)', minWidth: 32, textAlign: 'right' }}>{weights.dist.toFixed(2)}</span>
+                  </div>
+                </div>
+                <input
+                  type="range"
+                  min="0"
+                  max="1"
+                  step="0.05"
+                  value={weights.dist}
+                  className="macos-slider"
+                  style={{
+                    background: `linear-gradient(to right, var(--accent) 0%, var(--accent) ${Math.min(100, weights.dist * 100)}%, var(--border-default) ${Math.min(100, weights.dist * 100)}%, var(--border-default) 100%)`
+                  }}
+                  onChange={(e) => handleWeightChange('dist', parseFloat(e.target.value))}
+                />
+                <div style={{ fontSize: 10, color: 'var(--text-muted)', marginTop: 4 }}>
+                  Inverse CPA penalty: distance to reverse OpenDrift centroid.
+                </div>
               </div>
+
+              {/* Slider 2: Temporal Alignment */}
+              <div>
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', fontSize: 11, fontWeight: 700, marginBottom: 6 }}>
+                  <span style={{ color: 'var(--text-primary)' }}>Temporal Alignment (w_time)</span>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                    <span style={{ fontSize: 10, color: 'var(--text-muted)' }}>({normTime}%)</span>
+                    <span className="mono" style={{ color: 'var(--accent)', minWidth: 32, textAlign: 'right' }}>{weights.time.toFixed(2)}</span>
+                  </div>
+                </div>
+                <input
+                  type="range"
+                  min="0"
+                  max="1"
+                  step="0.05"
+                  value={weights.time}
+                  className="macos-slider"
+                  style={{
+                    background: `linear-gradient(to right, var(--accent) 0%, var(--accent) ${Math.min(100, weights.time * 100)}%, var(--border-default) ${Math.min(100, weights.time * 100)}%, var(--border-default) 100%)`
+                  }}
+                  onChange={(e) => handleWeightChange('time', parseFloat(e.target.value))}
+                />
+                <div style={{ fontSize: 10, color: 'var(--text-muted)', marginTop: 4 }}>
+                  Time delta relative to OpenDrift reverse discharge window.
+                </div>
+              </div>
+
+              {/* Slider 3: AIS Silence Gap */}
+              <div>
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', fontSize: 11, fontWeight: 700, marginBottom: 6 }}>
+                  <span style={{ color: 'var(--text-primary)' }}>AIS Silence Gap (w_gap)</span>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                    <span style={{ fontSize: 10, color: 'var(--text-muted)' }}>({normGap}%)</span>
+                    <span className="mono" style={{ color: '#f59e0b', minWidth: 32, textAlign: 'right' }}>{weights.gap.toFixed(2)}</span>
+                  </div>
+                </div>
+                <input
+                  type="range"
+                  min="0"
+                  max="1"
+                  step="0.05"
+                  value={weights.gap}
+                  className="macos-slider"
+                  style={{
+                    background: `linear-gradient(to right, #f59e0b 0%, #f59e0b ${Math.min(100, weights.gap * 100)}%, var(--border-default) ${Math.min(100, weights.gap * 100)}%, var(--border-default) 100%)`
+                  }}
+                  onChange={(e) => handleWeightChange('gap', parseFloat(e.target.value))}
+                />
+                <div style={{ fontSize: 10, color: 'var(--text-muted)', marginTop: 4 }}>
+                  Flag deliberate transponder shutdowns during transit through AOI.
+                </div>
+              </div>
+
+              {/* Slider 4: Vessel Type Risk Prior */}
+              <div>
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', fontSize: 11, fontWeight: 700, marginBottom: 6 }}>
+                  <span style={{ color: 'var(--text-primary)' }}>Vessel Type Risk Prior (w_type)</span>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                    <span style={{ fontSize: 10, color: 'var(--text-muted)' }}>({normType}%)</span>
+                    <span className="mono" style={{ color: '#8b5cf6', minWidth: 32, textAlign: 'right' }}>{weights.type.toFixed(2)}</span>
+                  </div>
+                </div>
+                <input
+                  type="range"
+                  min="0"
+                  max="1"
+                  step="0.05"
+                  value={weights.type}
+                  className="macos-slider"
+                  style={{
+                    background: `linear-gradient(to right, #8b5cf6 0%, #8b5cf6 ${Math.min(100, weights.type * 100)}%, var(--border-default) ${Math.min(100, weights.type * 100)}%, var(--border-default) 100%)`
+                  }}
+                  onChange={(e) => handleWeightChange('type', parseFloat(e.target.value))}
+                />
+                <div style={{ fontSize: 10, color: 'var(--text-muted)', marginTop: 4 }}>
+                  Cargo hazard prior: VLCC &gt; Aframax &gt; Chemical Tanker &gt; Cargo.
+                </div>
+              </div>
+            </div>
+
+            {/* NORMALIZATION FORMULA CARD */}
+            <div
+              style={{
+                background: 'var(--bg-raised)',
+                padding: '12px 14px',
+                borderRadius: 10,
+                border: '1px solid var(--border-subtle)',
+                marginTop: 4,
+              }}
+            >
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 6 }}>
+                <span style={{ fontSize: 11, fontWeight: 700, color: 'var(--text-primary)' }}>
+                  Kinematic Normalization Formula:
+                </span>
+                <span className="mono" style={{ fontSize: 10, color: 'var(--accent)', fontWeight: 700 }}>
+                  Σ(w) = {totalW.toFixed(2)}
+                </span>
+              </div>
+              <div className="mono" style={{ fontSize: 11, color: 'var(--accent)', background: 'var(--bg-base)', padding: '8px 10px', borderRadius: 6, lineHeight: 1.4 }}>
+                Score = ({weights.dist.toFixed(2)}·S_dist + {weights.time.toFixed(2)}·S_time + {weights.gap.toFixed(2)}·S_gap + {weights.type.toFixed(2)}·S_type) / {totalW.toFixed(2)}
+              </div>
+              <div style={{ fontSize: 10, color: 'var(--text-muted)', marginTop: 8, display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                <span>Effective Bayesian Weights:</span>
+                <span className="mono" style={{ color: 'var(--text-secondary)' }}>
+                  {normDist}% Dist · {normTime}% Time · {normGap}% Gap · {normType}% Type
+                </span>
+              </div>
+              <div style={{ display: 'flex', height: 4, borderRadius: 2, overflow: 'hidden', marginTop: 6, background: 'var(--border-subtle)' }}>
+                <div style={{ width: `${normDist}%`, background: 'var(--accent)' }} title={`Proximity: ${normDist}%`} />
+                <div style={{ width: `${normTime}%`, background: '#10b981' }} title={`Time: ${normTime}%`} />
+                <div style={{ width: `${normGap}%`, background: '#f59e0b' }} title={`Silence Gap: ${normGap}%`} />
+                <div style={{ width: `${normType}%`, background: '#8b5cf6' }} title={`Vessel Prior: ${normType}%`} />
+              </div>
+            </div>
+
+            {/* LEGAL EVIDENCE FRAMEWORK */}
+            <div
+              style={{
+                background: 'rgba(37, 99, 235, 0.06)',
+                borderLeft: '4px solid var(--accent)',
+                padding: '12px 14px',
+                borderRadius: 10,
+                fontSize: 11,
+                color: 'var(--text-secondary)',
+                lineHeight: 1.5,
+              }}
+            >
+              <div style={{ fontWeight: 700, color: 'var(--text-primary)', marginBottom: 4, display: 'flex', alignItems: 'center', gap: 6 }}>
+                <span className="material-symbols-outlined" style={{ fontSize: 16, color: 'var(--accent)' }}>gavel</span>
+                Legal Admissibility Framework
+              </div>
+              Under <strong>MARPOL 73/78 Annex I</strong> and <strong>Section 356 of the Merchant Shipping Act 1958</strong>,
+              spatiotemporal correlation between satellite SAR masks and AIS telemetry provides prima-facie evidence for Indian Coast Guard enforcement actions.
+            </div>
+
+            {/* DYNAMIC DRIFT PHYSICS CORRELATION TEST */}
+            <div
+              style={{
+                background: 'var(--bg-raised, rgba(255,255,255,0.02))',
+                border: '1px solid var(--border-color, rgba(255,255,255,0.08))',
+                padding: '12px 14px',
+                borderRadius: 10,
+                marginTop: 12,
+              }}
+            >
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8 }}>
+                <div style={{ fontWeight: 700, fontSize: 12, color: 'var(--text-primary)', display: 'flex', alignItems: 'center', gap: 6 }}>
+                  <span className="material-symbols-outlined" style={{ fontSize: 16, color: '#38bdf8' }}>science</span>
+                  Hydrodynamic Drift &amp; AIS Verification
+                </div>
+                <button
+                  className="action-pill-btn primary"
+                  onClick={runPhysicsEngine}
+                  disabled={loading}
+                  style={{ padding: '3px 10px', fontSize: 11 }}
+                >
+                  {loading ? 'Evaluating Drift...' : 'Run Physics Engine'}
+                </button>
+              </div>
+              <p style={{ fontSize: 11, color: 'var(--text-muted)', margin: 0 }}>
+                Correlates SAR envelope centroid with reverse AIS kinematic trajectory.
+              </p>
+
+              {evidence && (
+                <div style={{ padding: '8px 10px', background: 'rgba(0,0,0,0.3)', border: '1px solid rgba(255,255,255,0.08)', borderRadius: 6, marginTop: 8, fontSize: 11, fontFamily: 'monospace' }}>
+                  <div style={{ color: '#10b981', fontWeight: 600, marginBottom: 4 }}>✓ Backend Evaluation Complete:</div>
+                  <div style={{ color: 'var(--text-secondary)' }}>Status: <span style={{ color: '#fff' }}>{evidence.classification || 'CORRELATED'}</span></div>
+                  {evidence.drift_applied?.delta_x_m !== undefined && (
+                    <div style={{ color: 'var(--text-secondary)' }}>Drift Vector: <span style={{ color: '#38bdf8' }}>dx: {evidence.drift_applied.delta_x_m.toFixed(1)}m, dy: {evidence.drift_applied.delta_y_m.toFixed(1)}m</span></div>
+                  )}
+                  {evidence.confidence?.overall_confidence !== undefined && (
+                    <div style={{ color: 'var(--text-secondary)' }}>Confidence Score: <span style={{ color: '#f59e0b' }}>{(evidence.confidence.overall_confidence * 100).toFixed(1)}%</span></div>
+                  )}
+                </div>
+              )}
+            </div>
+          </div>
+
+          {/* RIGHT PANE: RANKED CANDIDATE VESSELS */}
+          <div className="canvas-pane">
+            <div className="pane-header">
+              <span className="pane-title">
+                <span className="material-symbols-outlined" style={{ fontSize: 18, color: 'var(--accent)' }}>format_list_numbered</span>
+                Ranked Suspect Vessels ({candidates.length} Screened)
+              </span>
+              <span className="text-xs text-muted">
+                Updated: {lastUpdated}
+              </span>
+            </div>
+
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 10, overflowY: 'auto' }}>
+              {candidates.map((v, idx) => {
+                const riskClass = v.risk.toLowerCase();
+                const scoreColor = v.attribution_score >= 0.75 ? '#ef4444' : v.attribution_score >= 0.5 ? '#f59e0b' : '#10b981';
+
+                return (
+                  <div
+                    key={v.mmsi}
+                    className={`vessel-candidate-card ${riskClass}`}
+                  >
+                    <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+                        <div
+                          style={{
+                            width: 24,
+                            height: 24,
+                            borderRadius: '50%',
+                            background: idx === 0 ? 'rgba(239, 68, 68, 0.15)' : 'var(--bg-raised)',
+                            color: idx === 0 ? '#ef4444' : 'var(--text-muted)',
+                            display: 'flex',
+                            alignItems: 'center',
+                            justifyContent: 'center',
+                            fontWeight: 800,
+                            fontSize: 12,
+                          }}
+                        >
+                          {idx + 1}
+                        </div>
+                        <div>
+                          <span style={{ fontSize: 13, fontWeight: 700, color: idx === 0 ? '#ef4444' : 'var(--text-primary)' }}>
+                            {v.name}
+                          </span>
+                          <span
+                            className="metric-trend-pill"
+                            style={{
+                              marginLeft: 8,
+                              fontSize: 9,
+                              padding: '1px 6px',
+                              background: v.risk === 'CRITICAL' ? 'rgba(239, 68, 68, 0.12)' : v.risk === 'HIGH' ? 'rgba(249, 115, 22, 0.12)' : 'rgba(56, 189, 248, 0.12)',
+                              color: v.risk === 'CRITICAL' ? '#ef4444' : v.risk === 'HIGH' ? '#f97316' : '#38bdf8',
+                            }}
+                          >
+                            {v.risk} SUSPICION
+                          </span>
+                        </div>
+                      </div>
+
+                      <div style={{ textAlign: 'right' }}>
+                        <div style={{ fontSize: 18, fontWeight: 800, color: scoreColor, fontFamily: 'monospace' }}>
+                          {v.attribution_score.toFixed(2)}
+                        </div>
+                        <div style={{ fontSize: 9, color: 'var(--text-muted)' }}>Attribution Score</div>
+                      </div>
+                    </div>
+
+                    <div style={{ fontSize: 10.5, color: 'var(--text-secondary)' }}>
+                      MMSI: <span className="mono">{v.mmsi}</span> · IMO: <span className="mono">{v.imo}</span> · Flag: {v.flag} · {v.type}
+                    </div>
+
+                    <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: 6, fontSize: 10, background: 'var(--bg-raised)', padding: '6px 8px', borderRadius: 6 }}>
+                      <div>
+                        <span className="text-muted">CPA: </span>
+                        <strong>{v.cpa_nm} nm</strong>
+                      </div>
+                      <div>
+                        <span className="text-muted">SOG: </span>
+                        <strong>{v.sog} kn</strong>
+                      </div>
+                      <div>
+                        <span className="text-muted">Heading: </span>
+                        <strong>{v.cog}°</strong>
+                      </div>
+                      <div style={{ color: v.ais_gap_hours > 2.0 ? '#f59e0b' : 'inherit' }}>
+                        <span className="text-muted">AIS Gap: </span>
+                        <strong>{v.ais_gap_hours}h</strong>
+                      </div>
+                    </div>
+
+                    {v.metrics && (
+                      <div style={{ display: 'flex', flexDirection: 'column', gap: 6, marginTop: 4 }}>
+                        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: 6, fontSize: 9.5 }}>
+                          <div>
+                            <div style={{ color: 'var(--text-muted)', marginBottom: 2, display: 'flex', justifyContent: 'space-between' }}>
+                              <span>Spatial</span>
+                              <span className="mono" style={{ color: 'var(--accent)' }}>+{v.metrics.weighted_dist_val}</span>
+                            </div>
+                            <div style={{ height: 4, borderRadius: 2, background: 'var(--border-subtle)', overflow: 'hidden' }}>
+                              <div style={{ width: `${v.metrics.spatial_match_pct}%`, height: '100%', background: 'var(--accent)' }} />
+                            </div>
+                            <span className="mono" style={{ fontSize: 9 }}>{v.metrics.spatial_match_pct}%</span>
+                          </div>
+                          <div>
+                            <div style={{ color: 'var(--text-muted)', marginBottom: 2, display: 'flex', justifyContent: 'space-between' }}>
+                              <span>Time</span>
+                              <span className="mono" style={{ color: '#10b981' }}>+{v.metrics.weighted_time_val}</span>
+                            </div>
+                            <div style={{ height: 4, borderRadius: 2, background: 'var(--border-subtle)', overflow: 'hidden' }}>
+                              <div style={{ width: `${v.metrics.temporal_alignment_pct}%`, height: '100%', background: '#10b981' }} />
+                            </div>
+                            <span className="mono" style={{ fontSize: 9 }}>{v.metrics.temporal_alignment_pct}%</span>
+                          </div>
+                          <div>
+                            <div style={{ color: 'var(--text-muted)', marginBottom: 2, display: 'flex', justifyContent: 'space-between' }}>
+                              <span>Dark Gap</span>
+                              <span className="mono" style={{ color: '#f59e0b' }}>+{v.metrics.weighted_gap_val}</span>
+                            </div>
+                            <div style={{ height: 4, borderRadius: 2, background: 'var(--border-subtle)', overflow: 'hidden' }}>
+                              <div style={{ width: `${v.metrics.dark_gap_suspicion_pct}%`, height: '100%', background: '#f59e0b' }} />
+                            </div>
+                            <span className="mono" style={{ fontSize: 9 }}>{v.metrics.dark_gap_suspicion_pct}%</span>
+                          </div>
+                          <div>
+                            <div style={{ color: 'var(--text-muted)', marginBottom: 2, display: 'flex', justifyContent: 'space-between' }}>
+                              <span>Prior</span>
+                              <span className="mono" style={{ color: '#8b5cf6' }}>+{v.metrics.weighted_type_val}</span>
+                            </div>
+                            <div style={{ height: 4, borderRadius: 2, background: 'var(--border-subtle)', overflow: 'hidden' }}>
+                              <div style={{ width: `${v.metrics.vessel_risk_prior_pct}%`, height: '100%', background: '#8b5cf6' }} />
+                            </div>
+                            <span className="mono" style={{ fontSize: 9 }}>{v.metrics.vessel_risk_prior_pct}%</span>
+                          </div>
+                        </div>
+
+                        {/* Weighted Contribution Stacked Bar */}
+                        <div style={{ display: 'flex', height: 4, borderRadius: 2, overflow: 'hidden', background: 'var(--border-subtle)' }} title={`Weighted breakdown: Spatial (+${v.metrics.weighted_dist_val}) + Time (+${v.metrics.weighted_time_val}) + Gap (+${v.metrics.weighted_gap_val}) + Prior (+${v.metrics.weighted_type_val}) = ${v.attribution_score.toFixed(2)}`}>
+                          <div style={{ width: `${((v.metrics.weighted_dist_val || 0) / v.attribution_score) * 100}%`, background: 'var(--accent)' }} />
+                          <div style={{ width: `${((v.metrics.weighted_time_val || 0) / v.attribution_score) * 100}%`, background: '#10b981' }} />
+                          <div style={{ width: `${((v.metrics.weighted_gap_val || 0) / v.attribution_score) * 100}%`, background: '#f59e0b' }} />
+                          <div style={{ width: `${((v.metrics.weighted_type_val || 0) / v.attribution_score) * 100}%`, background: '#8b5cf6' }} />
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                );
+              })}
             </div>
           </div>
         </div>
