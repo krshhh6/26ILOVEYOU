@@ -2,25 +2,50 @@ import React, { useState } from 'react';
 import type { AttributionWeights } from '../../types/dashboard';
 
 export const AttributionView: React.FC = () => {
-  const [weights, setWeights] = useState<AttributionWeights>({
-    dist: 0.30,
-    time: 0.25,
-    gap: 0.20,
-    type: 0.15,
-  });
+  const [loading, setLoading] = useState(false);
+  const [evidence, setEvidence] = useState<any>(null);
 
-  const [scores, setScores] = useState<[number, number, number]>([0.82, 0.61, 0.34]);
+  const runPhysicsEngine = async () => {
+    setLoading(true);
+    try {
+      const payload = {
+        detection: {
+          timestamp: new Date().toISOString(),
+          sensor_id: "S1A_IW_GRDH",
+          bounding_box: {
+            min_lon: 71.218, min_lat: 18.743, max_lon: 71.220, max_lat: 18.745
+          },
+          confidence_score: 0.94,
+          estimated_length_m: 220,
+          estimated_beam_m: 32,
+          heading_deg: 145
+        },
+        ais_history: [
+          {
+            mmsi: "419001234",
+            timestamp: new Date(Date.now() - 4 * 3600000).toISOString(),
+            lon: 71.180, lat: 18.710,
+            sog_knots: 4.1, cog_deg: 140,
+            vessel_length_m: 215, vessel_beam_m: 30,
+            vessel_type: "Crude Oil Tanker"
+          }
+        ]
+      };
 
-  const recalculate = () => {
-    const { dist, time, gap, type } = weights;
-    const total = dist + time + gap + type || 1;
-
-    const s1 = Math.min(1.0, (dist * 0.92 + time * 0.85 + gap * 0.90 + type * 0.95) / total);
-    const s2 = Math.min(1.0, (dist * 0.65 + time * 0.70 + gap * 0.50 + type * 0.80) / total);
-    const s3 = Math.min(1.0, (dist * 0.35 + time * 0.40 + gap * 0.20 + type * 0.70) / total);
-
-    setScores([s1, s2, s3]);
+      const res = await fetch("http://localhost:8000/api/v1/evidence/evaluate", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload)
+      });
+      const data = await res.json();
+      setEvidence(data);
+    } catch (err) {
+      console.error(err);
+    } finally {
+      setLoading(false);
+    }
   };
+
 
   return (
     <div id="tab-attribution" className="tab-content visible">
@@ -54,83 +79,29 @@ export const AttributionView: React.FC = () => {
                   gap: 6,
                 }}
               >
-                <span className="material-symbols-outlined" style={{ fontSize: 16 }}>tune</span>
-                Attribution Sensitivity Weights: S = Σ (wi · Si)
+                <span className="material-symbols-outlined" style={{ fontSize: 16 }}>science</span>
+                Dynamic Physics Engine Correlation
               </span>
               <button
                 className="btn btn-primary"
-                onClick={recalculate}
+                onClick={runPhysicsEngine}
+                disabled={loading}
                 style={{ padding: '4px 12px', fontSize: 11 }}
               >
-                Recalculate Ranking
+                {loading ? "Calculating Drift..." : "Run Physics Engine"}
               </button>
             </div>
 
-            <div className="tuner-grid">
-              <div className="tuner-slider-wrap">
-                <div className="tuner-lbl">
-                  <span>Spatial Proximity (w_dist)</span>
-                  <span className="mono fw-700">{weights.dist.toFixed(2)}</span>
-                </div>
-                <input
-                  type="range"
-                  min="0"
-                  max="1"
-                  step="0.05"
-                  value={weights.dist}
-                  className="tuner-input"
-                  onChange={(e) => setWeights({ ...weights, dist: parseFloat(e.target.value) })}
-                />
+            {evidence && (
+              <div style={{ padding: '12px', background: '#0a0a0a', border: '1px solid #333', borderRadius: '4px', marginTop: '12px', fontSize: '11px', fontFamily: 'monospace' }}>
+                <div style={{ color: '#0f0', marginBottom: '8px' }}>&gt; Backend Response Received:</div>
+                <div style={{ color: '#aaa' }}>Classification: <span style={{ color: '#fff' }}>{evidence.classification}</span></div>
+                <div style={{ color: '#aaa' }}>Drift Vector (dx/dy): <span style={{ color: '#fff' }}>{evidence.drift_applied?.delta_x_m?.toFixed(2)}m, {evidence.drift_applied?.delta_y_m?.toFixed(2)}m</span></div>
+                <div style={{ color: '#aaa' }}>Spatial Score: <span style={{ color: '#fff' }}>{evidence.confidence?.spatial_score?.toFixed(2)}</span></div>
+                <div style={{ color: '#aaa' }}>Dimension Match: <span style={{ color: '#fff' }}>{evidence.confidence?.dimension_score?.toFixed(2)}</span></div>
+                <div style={{ color: '#aaa' }}>Heading Match: <span style={{ color: '#fff' }}>{evidence.confidence?.heading_score?.toFixed(2)}</span></div>
               </div>
-
-              <div className="tuner-slider-wrap">
-                <div className="tuner-lbl">
-                  <span>Temporal Alignment (w_time)</span>
-                  <span className="mono fw-700">{weights.time.toFixed(2)}</span>
-                </div>
-                <input
-                  type="range"
-                  min="0"
-                  max="1"
-                  step="0.05"
-                  value={weights.time}
-                  className="tuner-input"
-                  onChange={(e) => setWeights({ ...weights, time: parseFloat(e.target.value) })}
-                />
-              </div>
-
-              <div className="tuner-slider-wrap">
-                <div className="tuner-lbl">
-                  <span>AIS Silence Gap (w_gap)</span>
-                  <span className="mono fw-700">{weights.gap.toFixed(2)}</span>
-                </div>
-                <input
-                  type="range"
-                  min="0"
-                  max="1"
-                  step="0.05"
-                  value={weights.gap}
-                  className="tuner-input"
-                  onChange={(e) => setWeights({ ...weights, gap: parseFloat(e.target.value) })}
-                />
-              </div>
-
-              <div className="tuner-slider-wrap">
-                <div className="tuner-lbl">
-                  <span>Vessel Type Risk Prior (w_type)</span>
-                  <span className="mono fw-700">{weights.type.toFixed(2)}</span>
-                </div>
-                <input
-                  type="range"
-                  min="0"
-                  max="1"
-                  step="0.05"
-                  value={weights.type}
-                  className="tuner-input"
-                  onChange={(e) => setWeights({ ...weights, type: parseFloat(e.target.value) })}
-                />
-              </div>
-            </div>
+            )}
           </div>
 
           {/* RANKED CANDIDATES */}
@@ -146,38 +117,14 @@ export const AttributionView: React.FC = () => {
               <div className="vessel-row bb">
                 <div className="v-rank r1">1</div>
                 <div className="vessel-info">
-                  <div className="v-name" style={{ color: 'var(--vessel-color)' }}>CRUDE ATLAS</div>
+                  <div className="v-name" style={{ color: 'var(--vessel-color)' }}>{evidence?.correlated_ais?.vessel_type ? 'CRUDE ATLAS' : 'WAITING FOR PHYSICS ENGINE...'}</div>
                   <div className="v-mmsi">MMSI: 419001234 · IMO: 9412345 · Flag: India · Crude Oil Tanker</div>
-                  <div className="v-meta">CPA: 1.2 nm from envelope centroid · Speed: 4.1 kn · AIS Gap: 4h 35m (suspicious)</div>
+                  <div className="v-meta">
+                    CPA: {evidence?.drift_applied?.delta_x_m ? `${(evidence.drift_applied.delta_x_m / 1852).toFixed(2)} nm` : '--- nm'} from envelope centroid · Speed: 4.1 kn
+                  </div>
                 </div>
                 <div className="score-col">
-                  <div className="score-val sc-h">{scores[0].toFixed(2)}</div>
-                  <div className="score-lbl">Attribution Score</div>
-                </div>
-              </div>
-
-              <div className="vessel-row bb">
-                <div className="v-rank r2">2</div>
-                <div className="vessel-info">
-                  <div className="v-name">MARITIME KOHISTAN</div>
-                  <div className="v-mmsi">MMSI: 419005678 · IMO: 9523456 · Flag: India · Product Tanker</div>
-                  <div className="v-meta">CPA: 3.8 nm from centroid · Speed: 12.4 kn · AIS Gap: 3h 33m</div>
-                </div>
-                <div className="score-col">
-                  <div className="score-val sc-m">{scores[1].toFixed(2)}</div>
-                  <div className="score-lbl">Attribution Score</div>
-                </div>
-              </div>
-
-              <div className="vessel-row">
-                <div className="v-rank r3">3</div>
-                <div className="vessel-info">
-                  <div className="v-name">GULF NAVIGATOR</div>
-                  <div className="v-mmsi">MMSI: 419007890 · IMO: 9634567 · Flag: Panama · Chemical Tanker</div>
-                  <div className="v-meta">CPA: 7.1 nm from centroid · Speed: 13.7 kn · AIS Gap: 1h 22m (normal shadow)</div>
-                </div>
-                <div className="score-col">
-                  <div className="score-val sc-l">{scores[2].toFixed(2)}</div>
+                  <div className="score-val sc-h">{evidence?.confidence?.overall_confidence?.toFixed(2) || '0.00'}</div>
                   <div className="score-lbl">Attribution Score</div>
                 </div>
               </div>

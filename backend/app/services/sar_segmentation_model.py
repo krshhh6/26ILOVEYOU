@@ -4,15 +4,25 @@ Spill Sense (SIH26143) — Sentinel-1 SAR Oil Spill U-Net Segmentation Model
 Benchmark: Krestenitis et al. (SOS: SAR Oil Spill Dataset / Sentinel-1 C-band)
 Version: unet-s1-sar-sos-v2.4-cdse
 """
+from __future__ import annotations
 
 import os
-import cv2
-import torch
-import torch.nn as nn
 import numpy as np
 from typing import List, Dict, Any, Tuple, Optional
 from shapely.geometry import Polygon, mapping
 import pyproj
+
+try:
+    import cv2
+    import torch
+    import torch.nn as nn
+    TORCH_AVAILABLE = True
+except ImportError:
+    TORCH_AVAILABLE = False
+    # Mock classes if torch is not available
+    class nn:
+        Module = object
+    torch = None
 
 class DoubleConv(nn.Module):
     """(Conv2D -> BatchNorm -> ReLU) * 2"""
@@ -73,22 +83,43 @@ class UNetS1SAR(nn.Module):
         return self.sigmoid(logits)
 
 class SARSPILLSegmentationEngine:
-    MODEL_VERSION = "unet-s1-sar-sos-v2.4-cdse"
+    MODEL_VERSION = "compact-s1-sar-unet-v2.5"
     GEOD = pyproj.Geod(ellps="WGS84")
 
     def __init__(self, weights_path: Optional[str] = None):
-        self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-        self.model = UNetS1SAR(in_channels=1, out_channels=1).to(self.device)
-        self.model.eval()
+        self.ort_session = None
+        self.device = None
+        self.model = None
 
-        if weights_path and os.path.exists(weights_path):
-            try:
-                self.model.load_state_dict(torch.load(weights_path, map_location=self.device))
-            except Exception:
-                pass
-        else:
-            # Initialize with calibrated weights favoring low-backscatter dampening anomalies
-            self._calibrate_initial_weights()
+        # Try ONNX Runtime first (high speed, lightweight, production standard)
+        try:
+            import onnxruntime as ort
+            onnx_candidates = [
+                os.path.join(os.path.dirname(__file__), "..", "..", "..", "frontend", "public", "models", "oil_segmenter.onnx"),
+                os.path.join(os.path.dirname(__file__), "..", "..", "..", "frontend", "public", "models", "oil_classifier.onnx"),
+                os.path.join(os.path.dirname(__file__), "..", "models", "oil_segmenter.onnx")
+            ]
+            for candidate in onnx_candidates:
+                if os.path.exists(candidate):
+                    self.ort_session = ort.InferenceSession(os.path.abspath(candidate), providers=['CPUExecutionProvider'])
+                    print(f"SARSPILLSegmentationEngine: Loaded ONNX Runtime engine from {candidate}")
+                    break
+        except Exception as e:
+            print(f"SARSPILLSegmentationEngine: ONNX Runtime initialization note: {e}")
+
+        # Fallback to PyTorch if available
+        if self.ort_session is None and TORCH_AVAILABLE:
+            self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+            self.model = UNetS1SAR(in_channels=1, out_channels=1).to(self.device)
+            self.model.eval()
+
+            if weights_path and os.path.exists(weights_path):
+                try:
+                    self.model.load_state_dict(torch.load(weights_path, map_location=self.device))
+                except Exception:
+                    self._calibrate_initial_weights()
+            else:
+                self._calibrate_initial_weights()
 
     def _calibrate_initial_weights(self):
         """Initializes weights with radiometric priors for Sentinel-1 capillary damping."""
@@ -120,13 +151,43 @@ class SARSPILLSegmentationEngine:
         # 1. Normalize input dB values from [-32 dB, -4 dB] to [0.0, 1.0]
         clipped_db = np.clip(sar_sigma0_db, -32.0, -4.0)
         norm_input = 1.0 - ((clipped_db - (-32.0)) / ((-4.0) - (-32.0)))
-        norm_input = norm_input * sea_mask.astype(np.float32)
+        norm_input = (norm_input * sea_mask.astype(np.float32)).astype(np.float32)
 
-        # 2. PyTorch Tensor preparation
-        tensor_in = torch.from_numpy(norm_input).unsqueeze(0).unsqueeze(0).to(self.device)
+        prob_map = None
 
-        with torch.no_grad():
-            prob_map = self.model(tensor_in).squeeze().cpu().numpy()
+        # Execute ONNX Runtime inference if available
+        if self.ort_session is not None:
+            try:
+                # Resize or crop to 400x400 for model input
+                import cv2
+                input_400 = cv2.resize(norm_input, (400, 400), interpolation=cv2.INTER_LINEAR)
+                tensor_in = np.expand_dims(np.expand_dims(input_400, axis=0), axis=0).astype(np.float32)
+                input_name = self.ort_session.get_inputs()[0].name
+                output_name = self.ort_session.get_outputs()[0].name
+                raw_out = self.ort_session.run([output_name], {input_name: tensor_in})[0]
+                
+                if raw_out.size > 1:
+                    # Dense probability mask (1, 1, 400, 400)
+                    prob_400 = raw_out.squeeze()
+                    prob_map = cv2.resize(prob_400, (cols, rows), interpolation=cv2.INTER_LINEAR)
+                else:
+                    # Scalar classification logit
+                    scalar_logit = float(raw_out.flat[0])
+                    p_slick = 1.0 / (1.0 + np.exp(-max(-20.0, min(20.0, scalar_logit))))
+                    prob_map = np.full((rows, cols), p_slick, dtype=np.float32) * norm_input
+            except Exception as e:
+                print(f"ONNX inference exception: {e}")
+                prob_map = None
+
+        # Execute PyTorch inference if ONNX was unavailable or failed
+        if prob_map is None and self.model is not None and TORCH_AVAILABLE:
+            tensor_in = torch.from_numpy(norm_input).unsqueeze(0).unsqueeze(0).to(self.device)
+            with torch.no_grad():
+                prob_map = self.model(tensor_in).squeeze().cpu().numpy()
+
+        if prob_map is None:
+            # Physics-based baseline probability if no deep engine loaded
+            prob_map = norm_input
 
         # 3. Capillary wave damping score relative to ambient ocean clutter
         ocean_mean_db = float(np.percentile(sar_sigma0_db[sea_mask == 1], 65)) if np.any(sea_mask == 1) else -14.0
@@ -135,7 +196,7 @@ class SARSPILLSegmentationEngine:
         damping_score = np.clip(damping_delta / 4.0, 0.0, 1.0) * sea_mask
 
         # Conjunction of neural network activation and microwave backscatter damping
-        combined_prob = (prob_map * 0.4) + (damping_score * 0.6)
+        combined_prob = (prob_map * 0.5) + (damping_score * 0.5)
         binary_mask = ((combined_prob >= sensitivity_threshold) & (damping_score > 0.05) & (sea_mask == 1)).astype(np.uint8)
 
         # Morphological cleanup (close micro-gaps, remove isolated speckle singletons)

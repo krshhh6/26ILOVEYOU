@@ -143,6 +143,25 @@ async def run_ais_correlation(req: AISRequest, db: Session = Depends(get_db)):
         "message": "AIS Vessel correlation has been queued."
     }
 
+from app.models.schemas.detection import DetectionPayload, AisPing, EvidenceRecord
+from app.services.attribution_engine import AttributionEngine
+
+class EvidenceEvaluationRequest(BaseModel):
+    detection: DetectionPayload
+    ais_history: List[AisPing]
+
+@router.post("/evidence/evaluate", response_model=EvidenceRecord)
+async def evaluate_evidence(req: EvidenceEvaluationRequest, db: Session = Depends(get_db)):
+    """
+    Synchronously correlates a SAR detection against historical AIS tracks
+    using dynamic physics drift, returning an auditable EvidenceRecord.
+    """
+    evidence_record = AttributionEngine.correlate_detections(
+        detection=req.detection,
+        ais_history=req.ais_history
+    )
+    return evidence_record
+
 @router.get("/dossier/{incident_id}")
 async def get_evidence_dossier(incident_id: str, db: Session = Depends(get_db)):
     """

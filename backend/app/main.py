@@ -46,6 +46,10 @@ from app.api.v1.detect_router import router as detect_router
 app.include_router(detect_router, prefix=settings.API_V1_STR)
 app.include_router(detect_router, prefix="/api")
 
+from app.api.v1.ml_metrics_router import router as ml_router
+app.include_router(ml_router, prefix=settings.API_V1_STR)
+app.include_router(ml_router, prefix="/api")
+
 # Mount Socket.IO for Real-Time Event Broadcasting
 from app.core.socket_server import socket_app
 app.mount("/", socket_app)

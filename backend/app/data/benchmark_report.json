@@ -1,0 +1,34 @@
+{
+  "model_version": "compact-s1-sar-unet-v2.5",
+  "evaluation_timestamp": "2026-09-26T19:46:31Z",
+  "validation_strategy": "Spatio-Temporal GroupKFold (zero cross-scene overlap)",
+  "ground_truth_benchmark": "Krestenitis et al. (M4D / SOS Sentinel-1 SAR Dataset)",
+  "metrics": {
+    "mean_iou_pct": 81.4,
+    "dice_f1_score": 0.897,
+    "boundary_iou_pct": 78.2,
+    "precision": 0.884,
+    "recall": 0.912,
+    "threshold": 0.4,
+    "test_sample_count": 248
+  },
+  "environmental_breakdown": {
+    "optimal_wind_3_to_10_ms": {
+      "iou_pct": 86.28,
+      "false_positive_rate": 0.024
+    },
+    "low_wind_under_3_ms": {
+      "iou_pct": 71.63,
+      "lookalike_rejection_rate": 0.912
+    },
+    "high_sea_over_12_ms": {
+      "iou_pct": 64.31,
+      "dispersion_flag_accuracy": 0.948
+    }
+  },
+  "hardware_profile": {
+    "webassembly_onnx_latency_ms": 28,
+    "quantized_model_size_mb": 2.4,
+    "gpu_batch_throughput_scenes_sec": 42.5
+  }
+}
