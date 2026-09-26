@@ -1021,6 +1021,37 @@ async function runSegmentation(
   const ambientOceanMean = marineCount > 0 ? sumMarine / marineCount : 85;
   const landBuffer = computeLandBufferMask(grayValues, 512, 512, 5);
 
+  // 2D Swath Background Polynomial Detrending (Plan 2.0):
+  // Eliminates antenna angle roll-off & low-wind ocean gradients across the scene
+  let sumX = 0, sumY = 0, sumG = 0, sumXX = 0, sumYY = 0, sumXG = 0, sumYG = 0;
+  let marineSamples = 0;
+  for (let y = 0; y < 512; y += 4) {
+    for (let x = 0; x < 512; x += 4) {
+      const idx = y * 512 + x;
+      const g = grayValues[idx];
+      if (g >= 12 && g <= 165 && landBuffer[idx] === 0) {
+        sumX += x; sumY += y; sumG += g;
+        sumXX += x * x; sumYY += y * y;
+        sumXG += x * g; sumYG += y * g;
+        marineSamples++;
+      }
+    }
+  }
+
+  let slopeX = 0;
+  let slopeY = 0;
+  if (marineSamples > 64) {
+    const meanX = sumX / marineSamples;
+    const meanY = sumY / marineSamples;
+    const meanG = sumG / marineSamples;
+    const varX = (sumXX / marineSamples) - (meanX * meanX);
+    const varY = (sumYY / marineSamples) - (meanY * meanY);
+    if (varX > 20) slopeX = ((sumXG / marineSamples) - (meanX * meanG)) / varX;
+    if (varY > 20) slopeY = ((sumYG / marineSamples) - (meanY * meanG)) / varY;
+    slopeX = Math.max(-0.25, Math.min(0.25, slopeX));
+    slopeY = Math.max(-0.25, Math.min(0.25, slopeY));
+  }
+
   const tensorData = new Float32Array(2 * numPixels);
   const hasDirectRasters = !cropBox &&
                            dualPolRasters?.vvRaster && dualPolRasters?.vhRaster &&
@@ -1037,27 +1068,33 @@ async function runSegmentation(
     // Aligns 8-bit dynamic range with the Zenodo trained SAR dB distribution
     // (where clean ocean is ~0.62 and oil slick is ~0.15-0.30)
     for (let i = 0; i < numPixels; i++) {
-      const gray = grayValues[i];
-      if (gray < 12) {
+      const x = i % 512;
+      const y = Math.floor(i / 512);
+      const rawG = grayValues[i];
+      if (rawG < 12) {
         // Synthetic black border / letterbox: pad with ambient ocean
         tensorData[i] = 0.62;
         tensorData[numPixels + i] = 0.56;
-      } else if (gray >= 165) {
+      } else if (rawG >= 165) {
         // High backscatter landmass / vessel metal
         tensorData[i] = 1.0;
         tensorData[numPixels + i] = 0.95;
-      } else if (gray <= ambientOceanMean) {
-        // Capillary damping depression (oil slick): maps [12, ambient] -> [0.10, 0.62]
-        const ratio = (gray - 12.0) / Math.max(1.0, ambientOceanMean - 12.0);
-        const vv = 0.10 + 0.52 * ratio;
-        tensorData[i] = vv;
-        tensorData[numPixels + i] = Math.max(0.0, vv - 0.05);
       } else {
-        // Rough ocean water: maps (ambient, 165] -> (0.62, 0.92]
-        const ratio = (gray - ambientOceanMean) / Math.max(1.0, 165.0 - ambientOceanMean);
-        const vv = 0.62 + 0.30 * Math.min(1.0, ratio);
-        tensorData[i] = vv;
-        tensorData[numPixels + i] = Math.max(0.0, vv - 0.05);
+        // Detrend large-scale background slope (e.g. dark right-side roll-off)
+        const gray = Math.max(12, Math.min(165, rawG - (slopeX * (x - 256) + slopeY * (y - 256))));
+        if (gray <= ambientOceanMean) {
+          // Capillary damping depression (oil slick): maps [12, ambient] -> [0.10, 0.62]
+          const ratio = (gray - 12.0) / Math.max(1.0, ambientOceanMean - 12.0);
+          const vv = 0.10 + 0.52 * ratio;
+          tensorData[i] = vv;
+          tensorData[numPixels + i] = Math.max(0.0, vv - 0.05);
+        } else {
+          // Rough ocean water: maps (ambient, 165] -> (0.62, 0.92]
+          const ratio = (gray - ambientOceanMean) / Math.max(1.0, 165.0 - ambientOceanMean);
+          const vv = 0.62 + 0.30 * Math.min(1.0, ratio);
+          tensorData[i] = vv;
+          tensorData[numPixels + i] = Math.max(0.0, vv - 0.05);
+        }
       }
     }
   }
@@ -1077,14 +1114,19 @@ async function runSegmentation(
   const rawMask = new Uint8Array(numPixels);
   for (let i = 0; i < numPixels; i++) {
     const prob = sigmoid(outputData[i]);
-    const gray = grayValues[i];
+    const x = i % 512;
+    const y = Math.floor(i / 512);
+    const rawG = grayValues[i];
+    const gray = (rawG >= 12 && rawG <= 165)
+      ? Math.max(12, Math.min(165, rawG - (slopeX * (x - 256) + slopeY * (y - 256))))
+      : rawG;
 
     // Physics-gated oil spill criteria:
     // 1. Calibrated U-Net confidence (prob >= 0.35)
-    // 2. Real radar signal (gray >= 12), not synthetic black void
+    // 2. Real radar signal (rawG >= 12), not synthetic black void
     // 3. Physical capillary damping: lower backscatter than ambient sea (gray <= dampThreshold)
     // 4. Terrestrial land & coastal buffer exclusion
-    if (prob >= 0.35 && gray >= 12 && gray <= dampThreshold && landBuffer[i] === 0) {
+    if (prob >= 0.35 && rawG >= 12 && gray <= dampThreshold && landBuffer[i] === 0) {
       rawMask[i] = 1;
     }
   }
