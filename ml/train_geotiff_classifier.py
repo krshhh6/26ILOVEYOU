@@ -30,7 +30,7 @@ from torch.utils.data import Dataset, DataLoader, WeightedRandomSampler
 # ============================================================
 
 TIFF_DIR = Path(r"D:\01_Train_Val_Oil_Spill_images\Oil")
-PROJECT_ROOT = Path(r"d:\Spill Sense\SIH-26143-OIL-Spill")
+PROJECT_ROOT = Path(__file__).resolve().parent.parent
 OUTPUT_ONNX = PROJECT_ROOT / "frontend" / "public" / "models" / "oil_classifier.onnx"
 DEMO_DIR = PROJECT_ROOT / "frontend" / "public" / "demo-sar"
 CACHE_DIR = PROJECT_ROOT / "ml" / "cache_patches"

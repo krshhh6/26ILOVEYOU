@@ -1,7 +1,7 @@
 import shutil
 from pathlib import Path
 
-demo_dir = Path(r"d:\Spill Sense\SIH-26143-OIL-Spill\frontend\public\demo-sar")
+demo_dir = Path(__file__).resolve().parent.parent / "frontend" / "public" / "demo-sar"
 
 for cls in [0, 1]:
     for i in range(1, 11):

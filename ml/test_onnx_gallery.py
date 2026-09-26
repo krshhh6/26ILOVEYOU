@@ -4,14 +4,17 @@ import numpy as np
 from PIL import Image
 from pathlib import Path
 
-sess = ort.InferenceSession(r'D:\Spill Sense\SIH-26143-OIL-Spill\frontend\public\models\oil_classifier.onnx')
+ROOT_DIR = Path(__file__).resolve().parent.parent
+model_path = ROOT_DIR / 'frontend' / 'public' / 'models' / 'oil_classifier.onnx'
+demo_dir = ROOT_DIR / 'frontend' / 'public' / 'demo-sar'
+
+sess = ort.InferenceSession(str(model_path))
 print(f'ONNX model loaded: {sess.get_inputs()[0].name} shape={sess.get_inputs()[0].shape}')
 
 def sigmoid(x):
     return 1.0 / (1.0 + np.exp(-np.clip(x, -20, 20)))
 
 threshold = 0.27
-demo_dir = Path(r'D:\Spill Sense\SIH-26143-OIL-Spill\frontend\public\demo-sar')
 
 print(f'\nThreshold: {threshold}')
 print('=' * 60)

@@ -282,14 +282,24 @@ class GeoTIFFReader:
                             "max_lon": float(ds.bounds.right),
                             "max_lat": float(ds.bounds.top),
                         }
-                        is_geo = bool(ds.crs and ds.transform and not ds.transform.is_identity)
+                        bands_count = int(ds.count)
+                        dtypes_list = [str(ds.dtypes[i]) for i in range(ds.count)]
+                        if TIFFFILE_AVAILABLE and bands_count == 1:
+                            try:
+                                with tifffile.TiffFile(io.BytesIO(raw_bytes)) as tf:
+                                    if len(tf.pages) > 1:
+                                        bands_count = len(tf.pages)
+                                        dtypes_list = [str(tf.pages[0].dtype)] * bands_count
+                            except Exception:
+                                pass
+
                         return {
                             "filename": filename,
                             "format": ds.driver or "TIFF",
                             "width": int(ds.width),
                             "height": int(ds.height),
-                            "bands": int(ds.count),
-                            "dtypes": [str(ds.dtypes[i]) for i in range(ds.count)],
+                            "bands": bands_count,
+                            "dtypes": dtypes_list,
                             "is_georeferenced": is_geo,
                             "crs": crs_wkt,
                             "transform": list(ds.transform)[:6] if ds.transform else None,

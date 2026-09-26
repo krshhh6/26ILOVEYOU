@@ -4,9 +4,10 @@ import numpy as np
 from PIL import Image
 import onnxruntime as ort
 
-model_path = Path(r"d:\Spill Sense\SIH-26143-OIL-Spill\frontend\public\models\oil_classifier.onnx")
-meta_path = Path(r"d:\Spill Sense\SIH-26143-OIL-Spill\frontend\public\models\model_metadata.json")
-demo_dir = Path(r"d:\Spill Sense\SIH-26143-OIL-Spill\frontend\public\demo-sar")
+ROOT_DIR = Path(__file__).resolve().parent.parent
+model_path = ROOT_DIR / "frontend" / "public" / "models" / "oil_classifier.onnx"
+meta_path = ROOT_DIR / "frontend" / "public" / "models" / "model_metadata.json"
+demo_dir = ROOT_DIR / "frontend" / "public" / "demo-sar"
 
 session = ort.InferenceSession(str(model_path), providers=["CPUExecutionProvider"])
 
