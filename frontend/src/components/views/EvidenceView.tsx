@@ -184,32 +184,65 @@ export const EvidenceView: React.FC<EvidenceViewProps> = ({ onOpenForensicModal,
   return (
     <div id="tab-evidence" className="tab-content visible modern-dashboard-root">
       {/* 1. EXECUTIVE HEADER */}
-      <div className="workspace-header-bar">
-        <div>
-          <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-            <h1 className="workspace-main-title">Forensic Evidence &amp; Chain of Custody</h1>
+      <div
+        className="workspace-header-bar"
+        style={{
+          display: 'flex',
+          justifyContent: 'space-between',
+          alignItems: 'center',
+          gap: 16,
+          flexWrap: 'nowrap',
+          marginBottom: 16,
+        }}
+      >
+        <div style={{ minWidth: 0, flex: 1 }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 4 }}>
+            <span
+              style={{
+                display: 'inline-flex',
+                alignItems: 'center',
+                gap: 5,
+                padding: '2px 8px',
+                borderRadius: 6,
+                background: 'rgba(56, 189, 248, 0.12)',
+                border: '1px solid rgba(56, 189, 248, 0.28)',
+                color: 'var(--accent)',
+                fontSize: 10,
+                fontWeight: 700,
+                letterSpacing: '0.04em',
+                textTransform: 'uppercase',
+              }}
+            >
+              <span className="material-symbols-outlined" style={{ fontSize: 13 }}>verified_user</span>
+              Digital Forensics &amp; Chain of Custody
+            </span>
             <span
               className="scenario-chip"
               style={{
                 borderColor: 'rgba(37, 99, 235, 0.4)',
                 color: 'var(--accent)',
-                fontSize: 10,
-                fontWeight: 700,
+                padding: '2px 8px',
+                fontSize: 10.5,
+                whiteSpace: 'nowrap',
               }}
             >
               {currentScenario?.id || 'INC-2026-005'} · {currentScenario?.title || 'Active Surveillance'}
             </span>
           </div>
-          <p className="workspace-sub-title">
-            Cryptographically Verifiable Evidence Package for Maritime Regulatory Enforcement · ISO/IEC 27037 Digital Forensics Standards · Sec 63 BSA 2023
+          <h1 className="workspace-main-title" style={{ fontSize: 20, fontWeight: 800, margin: 0, letterSpacing: '-0.02em', whiteSpace: 'nowrap' }}>
+            Forensic Evidence &amp; Chain of Custody
+          </h1>
+          <p className="workspace-sub-title" style={{ margin: '3px 0 0', fontSize: 11.5, color: 'var(--text-muted)' }}>
+            Cryptographically Verifiable Evidence Package for Maritime Regulatory Enforcement · ISO/IEC 27037 · Sec 63 BSA 2023
           </p>
         </div>
 
-        <div className="workspace-header-actions">
+        <div className="workspace-header-actions" style={{ display: 'flex', alignItems: 'center', gap: 8, flexShrink: 0 }}>
           <button
             className="action-pill-btn secondary"
             onClick={handleCopySignature}
             title="Copy Master SHA-256 Fingerprint"
+            style={{ fontSize: 11.5, padding: '5px 12px', height: 32, whiteSpace: 'nowrap' }}
           >
             <span className="material-symbols-outlined" style={{ fontSize: 16 }}>content_copy</span>
             <span>Copy Master Signature</span>
@@ -219,6 +252,7 @@ export const EvidenceView: React.FC<EvidenceViewProps> = ({ onOpenForensicModal,
             className="action-pill-btn primary"
             onClick={onOpenForensicModal}
             title="Generate & View Court-Admissible PDF Dossier"
+            style={{ fontSize: 11.5, padding: '5px 14px', height: 32, whiteSpace: 'nowrap' }}
           >
             <span className="material-symbols-outlined" style={{ fontSize: 16 }}>description</span>
             <span>Official Court Dossier</span>
@@ -227,7 +261,7 @@ export const EvidenceView: React.FC<EvidenceViewProps> = ({ onOpenForensicModal,
       </div>
 
       {/* 2. EXECUTIVE METRIC CARDS */}
-      <div className="executive-metrics-grid">
+      <div className="executive-metrics-grid" style={{ marginBottom: 14, gap: 12 }}>
         <div className="metric-card-neumorphic">
           <div className="metric-card-header">
             <span className="metric-card-label">Custody Seal Status</span>
@@ -302,14 +336,45 @@ export const EvidenceView: React.FC<EvidenceViewProps> = ({ onOpenForensicModal,
       </div>
 
       {/* 3. FUNCTIONAL WORKFLOW NAV BAR */}
-      <div className="workflow-nav-bar">
-        <div className="workflow-title-area">
-          <h2 className="workflow-title">Tamper-Evident Forensic Audit Ledger</h2>
-          <span className="scenario-chip" style={{ borderColor: 'rgba(37, 99, 235, 0.4)', color: 'var(--accent)' }}>
+      <div
+        className="workflow-nav-bar"
+        style={{
+          display: 'flex',
+          justifyContent: 'space-between',
+          alignItems: 'center',
+          gap: 12,
+          marginBottom: 14,
+          padding: '0 4px',
+        }}
+      >
+        <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
+          <h2 className="workflow-title" style={{ margin: 0, fontSize: 13.5, fontWeight: 700, whiteSpace: 'nowrap' }}>
+            Tamper-Evident Forensic Audit Ledger
+          </h2>
+          <span
+            className="scenario-chip"
+            style={{
+              borderColor: 'rgba(37, 99, 235, 0.4)',
+              color: 'var(--accent)',
+              padding: '2px 8px',
+              fontSize: 10.5,
+            }}
+          >
             Ledger Block #40921-IN · ECDSA Signed
           </span>
           {officerSignOff && (
-            <span className="scenario-chip" style={{ borderColor: 'rgba(16, 185, 129, 0.4)', color: '#10b981', display: 'flex', alignItems: 'center', gap: 4 }}>
+            <span
+              className="scenario-chip"
+              style={{
+                borderColor: 'rgba(16, 185, 129, 0.4)',
+                color: '#10b981',
+                padding: '2px 8px',
+                fontSize: 10.5,
+                display: 'inline-flex',
+                alignItems: 'center',
+                gap: 4,
+              }}
+            >
               <span className="material-symbols-outlined" style={{ fontSize: 13 }}>verified_user</span>
               Officer Endorsed
             </span>
@@ -320,29 +385,32 @@ export const EvidenceView: React.FC<EvidenceViewProps> = ({ onOpenForensicModal,
           <button
             className={`workflow-tab-btn ${activeSubTab === 'manifest' ? 'active' : ''}`}
             onClick={() => setActiveSubTab('manifest')}
+            style={{ padding: '6px 14px', fontSize: 12 }}
           >
-            <span className="material-symbols-outlined" style={{ fontSize: 15, verticalAlign: 'middle', marginRight: 4 }}>lock</span>
+            <span className="material-symbols-outlined" style={{ fontSize: 15, verticalAlign: 'middle', marginRight: 5 }}>lock</span>
             Cryptographic Manifest &amp; Timeline
           </button>
           <button
             className={`workflow-tab-btn ${activeSubTab === 'artifacts' ? 'active' : ''}`}
             onClick={() => setActiveSubTab('artifacts')}
+            style={{ padding: '6px 14px', fontSize: 12 }}
           >
-            <span className="material-symbols-outlined" style={{ fontSize: 15, verticalAlign: 'middle', marginRight: 4 }}>inventory_2</span>
+            <span className="material-symbols-outlined" style={{ fontSize: 15, verticalAlign: 'middle', marginRight: 5 }}>inventory_2</span>
             Artifacts &amp; Live Verifier (4)
           </button>
           <button
             className={`workflow-tab-btn ${activeSubTab === 'dossier' ? 'active' : ''}`}
             onClick={() => setActiveSubTab('dossier')}
+            style={{ padding: '6px 14px', fontSize: 12 }}
           >
-            <span className="material-symbols-outlined" style={{ fontSize: 15, verticalAlign: 'middle', marginRight: 4 }}>article</span>
+            <span className="material-symbols-outlined" style={{ fontSize: 15, verticalAlign: 'middle', marginRight: 5 }}>article</span>
             Court Dossier &amp; BSA §63
           </button>
         </div>
 
         {feedback && (
-          <div style={{ fontSize: 11, fontWeight: 600, color: feedback.color, display: 'flex', alignItems: 'center', gap: 6 }}>
-            <span className="material-symbols-outlined" style={{ fontSize: 15 }}>check_circle</span>
+          <div style={{ fontSize: 11.5, fontWeight: 600, color: feedback.color, display: 'flex', alignItems: 'center', gap: 6 }}>
+            <span className="material-symbols-outlined" style={{ fontSize: 16 }}>check_circle</span>
             {feedback.text}
           </div>
         )}
@@ -351,7 +419,7 @@ export const EvidenceView: React.FC<EvidenceViewProps> = ({ onOpenForensicModal,
       {downloadNotice && (
         <div
           style={{
-            margin: '0 0 12px',
+            margin: '0 0 14px',
             padding: '10px 16px',
             background: downloadNotice.isSuccess ? 'rgba(16, 185, 129, 0.12)' : 'rgba(56, 189, 248, 0.12)',
             border: downloadNotice.isSuccess ? '1px solid rgba(16, 185, 129, 0.35)' : '1px solid rgba(56, 189, 248, 0.28)',
@@ -376,8 +444,8 @@ export const EvidenceView: React.FC<EvidenceViewProps> = ({ onOpenForensicModal,
 
       {/* VIEW 1: MANIFEST & TIMELINE */}
       {activeSubTab === 'manifest' && (
-        <div className="canvas-rounded-container">
-          <div className="canvas-two-column">
+        <div className="canvas-rounded-container" style={{ marginTop: 0 }}>
+          <div className="canvas-two-column" style={{ paddingTop: 6, gap: 16 }}>
             {/* LEFT PANE: MASTER MANIFEST & SUMMARY */}
             <div className="canvas-pane">
               <div className="pane-header">

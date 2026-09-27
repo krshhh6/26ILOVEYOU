@@ -2,6 +2,10 @@ import react from '@vitejs/plugin-react'
 import { defineConfig, type Plugin } from 'vite'
 import fs from 'fs'
 import path from 'path'
+import { fileURLToPath } from 'url'
+
+const __filename = fileURLToPath(import.meta.url)
+const __dirname = path.dirname(__filename)
 
 function onnxWasmPlugin(): Plugin {
   return {
@@ -10,7 +14,7 @@ function onnxWasmPlugin(): Plugin {
       server.middlewares.use((req, res, next) => {
         if (req.url && req.url.startsWith('/onnx-dist/')) {
           const fileName = req.url.replace('/onnx-dist/', '').split('?')[0];
-          const filePath = path.resolve('node_modules/onnxruntime-web/dist', fileName);
+          const filePath = path.resolve(__dirname, 'node_modules/onnxruntime-web/dist', fileName);
           if (fs.existsSync(filePath)) {
             if (fileName.endsWith('.wasm')) {
               res.setHeader('Content-Type', 'application/wasm');
@@ -24,8 +28,8 @@ function onnxWasmPlugin(): Plugin {
       });
     },
     closeBundle() {
-      const srcDir = path.resolve(process.cwd(), 'node_modules/onnxruntime-web/dist');
-      const destDir = path.resolve(process.cwd(), 'dist/onnx-dist');
+      const srcDir = path.resolve(__dirname, 'node_modules/onnxruntime-web/dist');
+      const destDir = path.resolve(__dirname, 'dist/onnx-dist');
       if (fs.existsSync(srcDir)) {
         if (!fs.existsSync(destDir)) {
           fs.mkdirSync(destDir, { recursive: true });
