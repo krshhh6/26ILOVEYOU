@@ -557,17 +557,17 @@ export const LeafletMap: React.FC<LeafletMapProps> = ({
       ];
 
 
-      // Default to Sentinel-1 SAR Radar Backscatter (Microwave Capillary Damping)
-      let imageryFile = `/imagery/sar_${key}.png`;
+      // Default to Sentinel-1 SAR Radar Backscatter — large files use .webp (87% smaller than PNG)
+      let imageryFile = `/imagery/sar_${key}.webp`;
       let layerLabel = 'Sentinel-1A C-SAR IW GRD Calibrated Backscatter (VV Decibels)';
       let sensorDesc = 'Capillary Wave Damping (Δσ0 = -8.40 dB). Dark slick crater against rough ocean speckle.';
 
       if (selectedCopernicusLayer === 'sar-vv') {
-        imageryFile = `/imagery/sar_${key}.png`;
+        imageryFile = `/imagery/sar_${key}.webp`;
         layerLabel = 'Sentinel-1A C-SAR IW GRD Calibrated Backscatter (VV Decibels)';
         sensorDesc = 'Capillary Wave Damping (Δσ0 = -8.40 dB). Dark slick crater against rough ocean speckle.';
       } else if (selectedCopernicusLayer === 'sar-vh') {
-        imageryFile = `/imagery/vh_${key}.png`;
+        imageryFile = `/imagery/vh_${key}.webp`;
         layerLabel = 'Sentinel-1C C-SAR Cross-Polarization (VH Mode)';
         sensorDesc = 'Cross-polarized backscatter optimizing metallic vessel detection and surface roughness.';
       } else if (selectedCopernicusLayer === 'true-color') {
@@ -583,11 +583,11 @@ export const LeafletMap: React.FC<LeafletMapProps> = ({
         layerLabel = 'Sentinel-2 MSI False Color (CIR) Algae Exclusion';
         sensorDesc = 'Near-Infrared reflection proving negative for biogenic Sargassum/phytoplankton bloom.';
       } else if (selectedCopernicusLayer === 'nisar-ls') {
-        imageryFile = `/imagery/nisar_${key}.png`;
+        imageryFile = `/imagery/nisar_${key}.webp`;
         layerLabel = 'ISRO NISAR Dual-Band L+S Radar (DFDI Bragg Damping Composite)';
         sensorDesc = 'Dual-Frequency: S-Band (ISRO 3.2GHz) + L-Band (NASA 1.26GHz). DFDI=2.7dB confirms thick crude oil.';
       } else if (selectedCopernicusLayer === 'eos-04') {
-        imageryFile = `/imagery/eos04_${key}.png`;
+        imageryFile = `/imagery/eos04_${key}.webp`;
         layerLabel = 'ISRO EOS-04 (RISAT-1A) Circular Hybrid Polarimetry';
         sensorDesc = 'm-chi polarimetric decomposition distinguishing oil slick from look-alike low-wind areas.';
       }

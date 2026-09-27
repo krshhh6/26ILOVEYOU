@@ -175,14 +175,14 @@ export const MapPanel: React.FC<MapPanelProps> = ({
     : 'INC-001'
     : 'INC-001';
 
-  let rawImageSrc = `/imagery/sar_${scenarioKey}.png`;
-  if (selectedCopernicusLayer === 'sar-vv') rawImageSrc = `/imagery/sar_${scenarioKey}.png`;
-  else if (selectedCopernicusLayer === 'sar-vh') rawImageSrc = `/imagery/vh_${scenarioKey}.png`;
+  let rawImageSrc = `/imagery/sar_${scenarioKey}.webp`;
+  if (selectedCopernicusLayer === 'sar-vv') rawImageSrc = `/imagery/sar_${scenarioKey}.webp`;
+  else if (selectedCopernicusLayer === 'sar-vh') rawImageSrc = `/imagery/vh_${scenarioKey}.webp`;
   else if (selectedCopernicusLayer === 'true-color') rawImageSrc = `/imagery/tc_${scenarioKey}.png`;
   else if (selectedCopernicusLayer === 'swir-oil') rawImageSrc = `/imagery/swir_${scenarioKey}.png`;
   else if (selectedCopernicusLayer === 'false-color') rawImageSrc = `/imagery/cir_${scenarioKey}.png`;
-  else if (selectedCopernicusLayer === 'nisar-ls') rawImageSrc = `/imagery/nisar_${scenarioKey}.png`;
-  else if (selectedCopernicusLayer === 'eos-04') rawImageSrc = `/imagery/eos04_${scenarioKey}.png`;
+  else if (selectedCopernicusLayer === 'nisar-ls') rawImageSrc = `/imagery/nisar_${scenarioKey}.webp`;
+  else if (selectedCopernicusLayer === 'eos-04') rawImageSrc = `/imagery/eos04_${scenarioKey}.webp`;
 
   const executeDetection = async () => {
     if (!scenario) {
