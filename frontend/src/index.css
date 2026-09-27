@@ -2924,3 +2924,40 @@ svg { display: block; flex-shrink: 0; }
 
 
 
+
+/* -------------------------------------------------------------
+   PRINT STYLES FOR COURT-ADMISSIBLE FORENSIC DOSSIER
+------------------------------------------------------------- */
+@media print {
+  body * {
+    visibility: hidden;
+  }
+  .modal-backdrop.open,
+  .modal-backdrop.open .print-dossier-card,
+  .modal-backdrop.open .print-dossier-card * {
+    visibility: visible;
+  }
+  .modal-backdrop.open {
+    position: absolute;
+    left: 0;
+    top: 0;
+    width: 100%;
+    height: auto;
+    background: #ffffff !important;
+    padding: 0 !important;
+    margin: 0 !important;
+    display: block !important;
+  }
+  .print-dossier-card {
+    box-shadow: none !important;
+    border: none !important;
+    max-width: 100% !important;
+    width: 100% !important;
+    padding: 10px !important;
+    background: #ffffff !important;
+    color: #000000 !important;
+  }
+  .hide-on-print {
+    display: none !important;
+  }
+}
