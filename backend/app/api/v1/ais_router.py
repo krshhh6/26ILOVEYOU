@@ -3,14 +3,17 @@
 Spill Sense (SIH26143) — AISHub Live Maritime Routing & Attribution Endpoints
 """
 
+from typing import Optional, List, Dict, Any
 from fastapi import APIRouter, Query
 from pydantic import BaseModel
-from typing import List, Dict, Any, Optional
 from app.services.aishub_service import AISHubService
+from app.services.aisstream_service import AISStreamService
+from datetime import datetime, timezone
 
 router = APIRouter(prefix="/ais", tags=["AIS Maritime Surveillance"])
 
 ais_service = AISHubService()
+stream_service = AISStreamService()
 
 class CorrelationWeights(BaseModel):
     dist: float = 0.30
@@ -35,10 +38,33 @@ async def get_live_ais_vessels(
     username: Optional[str] = Query(None, description="Optional AISHub username")
 ):
     """
-    Fetches real-time AIS vessel locations from AISHub webservice.
-    Cached for 60 seconds to satisfy AISHub's rate limit.
+    Fetches real-time AIS vessel locations from live AISStream.io feed or AISHub webservice.
     """
+    # 1. Check if AISStream WebSocket has live vessels in this bounding box
+    stream_vessels = stream_service.get_live_vessels(latmin, latmax, lonmin, lonmax)
+    if stream_vessels:
+        return {
+            "source": "AISSTREAM_LIVE_WEBSOCKET",
+            "count": len(stream_vessels),
+            "vessels": stream_vessels,
+            "timestamp": datetime.now(timezone.utc).isoformat()
+        }
+
+    # 2. Otherwise query AISHub or fall back to calibrated Indian EEZ dataset
     return ais_service.get_live_vessels(latmin, latmax, lonmin, lonmax, username=username)
+
+@router.get("/stream-status")
+async def get_stream_status():
+    """Returns the live status of the AISStream WebSocket connection and active vessels."""
+    all_vessels = stream_service.get_all_vessels()
+    return {
+        "status": "ONLINE" if stream_service._is_running else "OFFLINE",
+        "service": "AISStream.io Live Global WebSocket",
+        "api_key_configured": bool(stream_service.api_key),
+        "total_live_vessels_tracked": len(all_vessels),
+        "vessels": all_vessels
+    }
+
 
 @router.post("/score")
 @router.post("/attribute")
@@ -53,8 +79,14 @@ async def score_vessels(req: CorrelateRequest):
     lonmin = req.lng - deg_delta
     lonmax = req.lng + deg_delta
 
-    feed = ais_service.get_live_vessels(latmin, latmax, lonmin, lonmax, username=req.username)
-    raw_vessels = feed.get("vessels", [])
+    stream_vessels = stream_service.get_live_vessels(latmin, latmax, lonmin, lonmax)
+    if stream_vessels:
+        raw_vessels = stream_vessels
+        feed_source = "AISSTREAM_LIVE_WEBSOCKET"
+    else:
+        feed = ais_service.get_live_vessels(latmin, latmax, lonmin, lonmax, username=req.username)
+        raw_vessels = feed.get("vessels", [])
+        feed_source = feed.get("source", "AISHUB_API")
 
     w = req.weights
     total_w = w.dist + w.time + w.gap + w.type or 1.0
@@ -109,7 +141,7 @@ async def score_vessels(req: CorrelateRequest):
     return {
         "status": "SUCCESS",
         "incident_id": req.incident_id,
-        "feed_source": feed.get("source"),
+        "feed_source": feed_source,
         "total_vessels_screened": len(ranked),
         "candidates": ranked,
         "active_weights": w.dict()

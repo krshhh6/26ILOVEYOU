@@ -513,13 +513,49 @@ export const LeafletMap: React.FC<LeafletMapProps> = ({
 
       const centerLat = sc.lat;
       const centerLng = sc.lng;
-      const isCoastline = (centerLng > 79.5 && centerLng < 82.0) || (centerLng > 73.0 && centerLng < 74.0);
-      const deltaLng = isCoastline ? 0.20 : 0.28;
-      const deltaLat = isCoastline ? 0.16 : 0.22;
-      const imageryBounds: [[number, number], [number, number]] = [
-        [centerLat - deltaLat, centerLng - deltaLng],
-        [centerLat + deltaLat, centerLng + deltaLng],
+
+      // Per-scenario calibrated imagery bounds — shifted seaward for coastal incidents
+      // so the satellite drape never overlaps land. Values are [latMin, lngMin, latMax, lngMax].
+
+      const scenarioBoundsMap: Record<string, [[number, number], [number, number]]> = {
+        // INC-001: 18.743°N 71.218°E — Mumbai High, deep offshore, centered symmetric
+        'INC-001': [[18.52, 70.98], [18.96, 71.46]],
+
+        // INC-002: 13.250°N 80.460°E — Chennai-Ennore
+        // Coast at ~80.30°E. Centered on 80.46 with tight left margin (0.14° offshore buffer).
+        // Window: 80.32→80.60 (center=80.46, matching scenario exactly)
+        'INC-002': [[13.08, 80.32], [13.42, 80.60]],
+
+        // INC-003: 10.456°N 93.123°E — Andaman Sea, open ocean, centered symmetric
+        'INC-003': [[10.24, 92.88], [10.68, 93.37]],
+
+        // INC-004: 15.420°N 73.650°E — Goa (west coast, ocean = WEST, land = EAST)
+        // Goa coast at ~73.88°E. Center on 73.65 with right edge at 73.82 (safe from land).
+        // Window: 73.48→73.82 (center=73.65, matching scenario exactly)
+        'INC-004': [[15.22, 73.48], [15.62, 73.82]],
+
+        // INC-005: 22.600°N 69.500°E — Gulf of Kutch, open water, centered symmetric
+        'INC-005': [[22.38, 69.26], [22.82, 69.74]],
+
+        // INC-006: 9.960°N 76.080°E — Cochin (west coast, ocean = WEST, land = EAST)
+        // Kerala coast at ~76.30°E. Center on 76.08 with right edge at 76.22 (safe from land).
+        // Window: 75.94→76.22 (center=76.08, matching scenario exactly)
+        'INC-006': [[9.76, 75.94], [10.16, 76.22]],
+
+        // INC-007: 20.250°N 86.720°E — Paradip (east coast, ocean = EAST, land = WEST)
+        // Odisha coast at ~86.62°E. Center on 86.72 with left edge at 86.62 (just offshore).
+        // Window: 86.62→86.82 (center=86.72, matching scenario exactly, pushed east)
+        'INC-007': [[20.06, 86.62], [20.44, 86.98]],
+
+        // INC-008: 8.500°N 73.000°E — Lakshadweep, open ocean, centered symmetric
+        'INC-008': [[8.28, 72.76], [8.72, 73.24]],
+      };
+
+      const imageryBounds: [[number, number], [number, number]] = scenarioBoundsMap[key] ?? [
+        [centerLat - 0.22, centerLng - 0.28],
+        [centerLat + 0.22, centerLng + 0.28],
       ];
+
 
       // Default to Sentinel-1 SAR Radar Backscatter (Microwave Capillary Damping)
       let imageryFile = `/imagery/sar_${key}.png`;
@@ -556,8 +592,11 @@ export const LeafletMap: React.FC<LeafletMapProps> = ({
         sensorDesc = 'm-chi polarimetric decomposition distinguishing oil slick from look-alike low-wind areas.';
       }
 
-      // Add satellite imagery drape ONLY if showOverlay is enabled AND scenario has a rendered image asset
-      const hasImageFile = ['INC-001', 'INC-002', 'INC-003', 'INC-004'].includes(key);
+      // Add satellite imagery drape ONLY for the active (focused) scenario to avoid broken image boxes
+      // for all the inactive incidents whose large imagery files would be loaded simultaneously
+      const hasImageFile = isActive && (
+        ['INC-001', 'INC-002', 'INC-003', 'INC-004', 'INC-005', 'INC-006', 'INC-007', 'INC-008'].includes(key)
+      );
       if (showOverlay && hasImageFile) {
         const satelliteDrape = L.imageOverlay(imageryFile, imageryBounds, {
           opacity: layerOpacity,
@@ -583,6 +622,21 @@ export const LeafletMap: React.FC<LeafletMapProps> = ({
           }
         });
         group.addLayer(satelliteDrape);
+
+        // Hide broken image overlays silently — if the asset 404s or fails to decode,
+        // remove the layer so no white broken box appears on the map
+        satelliteDrape.on('load', () => {
+          const imgEl = (satelliteDrape as any)._image as HTMLImageElement | undefined;
+          if (imgEl) {
+            imgEl.onerror = () => {
+              imgEl.style.display = 'none';
+              group.removeLayer(satelliteDrape);
+            };
+          }
+        });
+        satelliteDrape.on('error', () => {
+          group.removeLayer(satelliteDrape);
+        });
       }
 
       // Tiered Oil Slick Polygons (Bonn Code Core + Sheen) - ONLY RENDER IF showAiMask is TRUE!
@@ -756,26 +810,50 @@ export const LeafletMap: React.FC<LeafletMapProps> = ({
     const centerLat = scenario.lat;
     const centerLng = scenario.lng;
 
-    // ── AI MASK & HYDRODYNAMIC ANALYSIS OVERLAYS (Rendered ONLY when showAiMask is enabled) ──
-    if (showAiMask) {
-      // ── 2. SENTINEL-1 IW SCENE FOOTPRINT SWATH ──
-      const swathCoords: [number, number][] = [
-        [centerLat + 0.65, centerLng - 0.95],
-        [centerLat + 0.45, centerLng + 0.85],
-        [centerLat - 0.65, centerLng + 0.55],
-        [centerLat - 0.45, centerLng - 1.25],
-      ];
+    // ── SATELLITE FOOTPRINT SWATH (Dynamic for ISRO NISAR / Sentinel-1 / Sentinel-2 / EOS-04) ──
+    if (showAiMask || showOverlay) {
+      const isNisar = selectedCopernicusLayer === 'nisar-ls';
+      const isEos04 = selectedCopernicusLayer === 'eos-04';
+      const isOptical = selectedCopernicusLayer === 'true-color' || selectedCopernicusLayer === 'swir-oil' || selectedCopernicusLayer === 'false-color';
+
+      const swathCoords: [number, number][] = isNisar
+        ? [
+            [centerLat + 0.75, centerLng - 0.85],
+            [centerLat + 0.55, centerLng + 0.95],
+            [centerLat - 0.75, centerLng + 0.65],
+            [centerLat - 0.55, centerLng - 1.15],
+          ]
+        : [
+            [centerLat + 0.65, centerLng - 0.95],
+            [centerLat + 0.45, centerLng + 0.85],
+            [centerLat - 0.65, centerLng + 0.55],
+            [centerLat - 0.45, centerLng - 1.25],
+          ];
+
+      const swathColor = isNisar ? '#F59E0B' : isEos04 ? '#10B981' : isOptical ? '#38BDF8' : '#0891B2';
+      const swathTitle = isNisar
+        ? '<b>ISRO NISAR SweepSAR L+S Footprint (242 km Swath)</b><br>ISRO S-Band (3.2 GHz) + NASA L-Band (1.25 GHz)<br>Polarimetric Bragg Damping DFDI Composite • ISRO NRSC Bhoonidhi'
+        : isEos04
+        ? '<b>ISRO EOS-04 (RISAT-1A) C-SAR Circular Pol Footprint (140 km Swath)</b><br>ISRO NRSC Bhoonidhi OpenData Node'
+        : isOptical
+        ? '<b>Sentinel-2 MSI Multispectral Footprint (290 km Swath)</b><br>ESA Copernicus Multispectral'
+        : '<b>Sentinel-1A C-SAR IW GRD Footprint (250 km Swath)</b><br>Copernicus Data Space Ecosystem';
+
       const swathPoly = L.polygon(swathCoords, {
-        color: '#0891B2',
-        weight: 1.5,
-        dashArray: '5, 6',
-        fillColor: '#0891B2',
-        fillOpacity: 0.03,
-      }).bindTooltip('<b>Sentinel-1A C-SAR IW GRD Footprint (250 km Swath)</b><br>Copernicus Data Space Ecosystem', {
+        color: swathColor,
+        weight: isNisar ? 2.5 : 1.5,
+        dashArray: isNisar ? '6, 4' : '5, 6',
+        fillColor: swathColor,
+        fillOpacity: isNisar ? 0.08 : 0.03,
+      }).bindTooltip(swathTitle, {
         sticky: true,
         className: 'gis-custom-tooltip',
       });
       group.addLayer(swathPoly);
+    }
+
+    // ── AI MASK & HYDRODYNAMIC ANALYSIS OVERLAYS (Rendered ONLY when showAiMask is enabled) ──
+    if (showAiMask) {
       // ── 4. GEODETIC DIMENSION AXES ──
       const isChennai = scenario.id.includes('002');
       const isGoa = scenario.id.includes('004');

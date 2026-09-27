@@ -116,8 +116,8 @@ export const MapPanel: React.FC<MapPanelProps> = ({
 }) => {
   const [baseLayer2D, setBaseLayer2D] = useState<BaseLayerType>('arcgis');
   const [showSeamarks, setShowSeamarks] = useState<boolean>(true);
-  const [selectedCopernicusLayer, setSelectedCopernicusLayer] = useState<CopernicusLayerId>('sar-vv');
-  const [activeSatellite, setActiveSatellite] = useState<string>('Sentinel-1A');
+  const [selectedCopernicusLayer, setSelectedCopernicusLayer] = useState<CopernicusLayerId>('nisar-ls');
+  const [activeSatellite, setActiveSatellite] = useState<string>('ISRO NISAR');
   const [showSpillOverlay, setShowSpillOverlay] = useState<boolean>(true);
   const [showIndiaOutline, setShowIndiaOutline] = useState<boolean>(true);
   const [showEezBoundary, setShowEezBoundary] = useState<boolean>(true);
@@ -137,7 +137,7 @@ export const MapPanel: React.FC<MapPanelProps> = ({
   const [showAiMask, setShowAiMask] = useState<boolean>(true);
   const [showRawImageModal, setShowRawImageModal] = useState<boolean>(false);
   const [modalZoom, setModalZoom] = useState<number>(1.0);
-  const [selectedDate, setSelectedDate] = useState<string>('2024-11-14');
+  const [selectedDate, setSelectedDate] = useState<string>(() => new Date().toISOString().split('T')[0]);
   const [cloudCoverMax] = useState<number>(30);
   const [detectionResult, setDetectionResult] = useState<DetectionResult | null>(null);
   const [driftEnvelopes, setDriftEnvelopes] = useState<any>(null);
@@ -168,6 +168,10 @@ export const MapPanel: React.FC<MapPanelProps> = ({
     : scenario.id.includes('002') ? 'INC-002'
     : scenario.id.includes('003') ? 'INC-003'
     : scenario.id.includes('004') ? 'INC-004'
+    : scenario.id.includes('005') ? 'INC-005'
+    : scenario.id.includes('006') ? 'INC-006'
+    : scenario.id.includes('007') ? 'INC-007'
+    : scenario.id.includes('008') ? 'INC-008'
     : 'INC-001'
     : 'INC-001';
 
@@ -200,8 +204,15 @@ export const MapPanel: React.FC<MapPanelProps> = ({
   const handleSelectBasemap = (layer: BaseLayerType) => {
     setBaseLayer2D(layer);
     if (layer === 'bhuvan') {
-      handleSelectCopernicusLayer('sar-vv');
-      setSatelliteToast('🇮🇳 ISRO Bhuvan / Bhoonidhi • Official Indian Government Satellite Map');
+      // Auto-apply ISRO Bhuvan preset: NISAR dual-band, AI Analysis, EEZ, Overlay at 76%
+      setActiveSatellite('ISRO NISAR');
+      setSelectedCopernicusLayer('nisar-ls');
+      setShowAiMask(true);
+      setShowEezBoundary(true);
+      setShowIndiaOutline(true);
+      setShowSpillOverlay(true);
+      setLayerOpacity(0.76);
+      setSatelliteToast('🇮🇳 ISRO Bhuvan + NISAR SweepSAR L+S • Auto-preset applied');
       setTimeout(() => setSatelliteToast(null), 3500);
     } else if (layer === 'satellite' || layer === 'arcgis') {
       handleSelectCopernicusLayer('sar-vv');

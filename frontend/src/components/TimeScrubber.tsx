@@ -9,7 +9,8 @@ export const TimeScrubber: React.FC<TimeScrubberProps> = ({ onTimeChange }) => {
   const [isPlaying, setIsPlaying] = useState<boolean>(false);
   const playTimerRef = useRef<number | null>(null);
 
-  const baseDate = new Date('2024-11-14T04:22:00Z');
+  // Dynamically anchored to current live time
+  const [baseDate] = useState<Date>(() => new Date());
 
   const getReadoutText = (hrs: number) => {
     const tDate = new Date(baseDate.getTime() + hrs * 3600 * 1000);

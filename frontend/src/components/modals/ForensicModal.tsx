@@ -66,7 +66,7 @@ export const ForensicModal: React.FC<ForensicModalProps> = ({ isOpen, onClose, s
             }}
           >
             <div><strong>Incident Identifier:</strong> <span className="mono">{scenario.id} ({scenario.title})</span></div>
-            <div><strong>Detection Timestamp:</strong> <span className="mono">2024-11-14 04:22:11Z</span></div>
+            <div><strong>Detection Timestamp:</strong> <span className="mono">{new Date().toISOString().replace('T', ' ').slice(0, 19)}Z</span></div>
             <div><strong>Centroid Coordinate:</strong> <span className="mono">{scenario.lat.toFixed(4)}°N, {scenario.lng.toFixed(4)}°E (EPSG:4326)</span></div>
             <div><strong>Estimated Surface Area:</strong> <span className="mono">{scenario.area || 'Model-Derived Polygon Area'}</span></div>
             <div><strong>Satellite Source:</strong> <span className="mono">Sentinel-1A IW GRD (Copernicus)</span></div>

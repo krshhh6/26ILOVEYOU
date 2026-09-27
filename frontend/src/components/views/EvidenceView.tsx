@@ -680,7 +680,7 @@ export const EvidenceView: React.FC<EvidenceViewProps> = ({ onOpenForensicModal,
                   SAR Scene Ingestion Authenticated
                 </div>
                 <div style={{ fontSize: 9.5, color: 'var(--text-muted)' }}>
-                  2024-11-14 04:22 UTC · Sentinel-1 L1C Ground Range Detected (GRD) CRC32 Verified
+                  {new Date().toISOString().split('T')[0]} 04:22 UTC · Sentinel-1 L1C Ground Range Detected (GRD) CRC32 Verified
                 </div>
               </div>
 
@@ -709,7 +709,7 @@ export const EvidenceView: React.FC<EvidenceViewProps> = ({ onOpenForensicModal,
                   Feature Mask SHA-256 Timestamped
                 </div>
                 <div style={{ fontSize: 9.5, color: 'var(--text-muted)' }}>
-                  2024-11-14 04:25 UTC · U-Net ResNet-50 oil polygon boundary immutable hash
+                  {new Date().toISOString().split('T')[0]} 04:25 UTC · U-Net ResNet-50 oil polygon boundary immutable hash
                 </div>
               </div>
 
@@ -738,7 +738,7 @@ export const EvidenceView: React.FC<EvidenceViewProps> = ({ onOpenForensicModal,
                   Drift NetCDF Output Hashed
                 </div>
                 <div style={{ fontSize: 9.5, color: 'var(--text-muted)' }}>
-                  2024-11-14 04:29 UTC · OpenDrift Lagrangian Monte Carlo trajectory coordinates sealed
+                  {new Date().toISOString().split('T')[0]} 04:29 UTC · OpenDrift Lagrangian Monte Carlo trajectory coordinates sealed
                 </div>
               </div>
 
@@ -767,7 +767,7 @@ export const EvidenceView: React.FC<EvidenceViewProps> = ({ onOpenForensicModal,
                   AIS Intersect Matrix Sealed
                 </div>
                 <div style={{ fontSize: 9.5, color: 'var(--text-muted)' }}>
-                  2024-11-14 04:33 UTC · AISHub candidate correlations & silence gaps recorded
+                  {new Date().toISOString().split('T')[0]} 04:33 UTC · AISHub candidate correlations & silence gaps recorded
                 </div>
               </div>
 

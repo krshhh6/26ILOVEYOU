@@ -37,6 +37,30 @@ export const Sidebar: React.FC<SidebarProps> = ({
 
   const totalCount = allEntries.length;
 
+  const [aisCount, setAisCount] = useState<number | null>(null);
+
+  React.useEffect(() => {
+    let mounted = true;
+    const fetchAis = async () => {
+      try {
+        const res = await fetch('/api/v1/ais/stream-status');
+        if (res.ok) {
+          const data = await res.json();
+          if (mounted && data.total_live_vessels_tracked !== undefined) {
+            setAisCount(data.total_live_vessels_tracked);
+          }
+        }
+      } catch (e) {
+        // quiet fallback
+      }
+    };
+    fetchAis();
+    const interval = setInterval(fetchAis, 12000);
+    return () => {
+      mounted = false;
+      clearInterval(interval);
+    };
+  }, []);
 
   return (
     <aside className="secondary-drawer">
@@ -139,9 +163,9 @@ export const Sidebar: React.FC<SidebarProps> = ({
             <div className="drawer-status-row">
               <div className="drawer-status-left">
                 <span className="status-dot dot-live" />
-                <span>AISHub Feed</span>
+                <span>AISStream Live</span>
               </div>
-              <span className="status-count">60s</span>
+              <span className="status-count">{aisCount !== null ? `${aisCount} Live` : 'Connecting...'}</span>
             </div>
             <div className="drawer-status-row">
               <div className="drawer-status-left">

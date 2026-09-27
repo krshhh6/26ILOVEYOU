@@ -15,11 +15,15 @@ class Settings(BaseSettings):
     CDSE_USERNAME: str = ""
     CDSE_PASSWORD: str = ""
     
+    # AISStream API Key
+    AISSTREAM_API_KEY: str = "47c9a557f534c95dcc5a3912e4328cebafb3d861"
+
     # CORS Origins
-    CORS_ORIGINS: List[str] = ["http://localhost:8080", "http://localhost:3000", "*"]
+    CORS_ORIGINS: List[str] = ["http://localhost:8080", "http://localhost:3000", "http://localhost:5173", "*"]
 
     class Config:
         case_sensitive = True
         env_file = ".env"
+        extra = "ignore"
 
 settings = Settings()

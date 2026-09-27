@@ -547,8 +547,62 @@ export const AttributionView: React.FC<AttributionViewProps> = ({ currentScenari
   });
 
   const [isLoading, setIsLoading] = useState<boolean>(false);
-  const [feedSource] = useState<string>('AISHub Maritime Transponder Engine');
+  const [feedSource, setFeedSource] = useState<string>('AISStream.io WebSocket');
   const [lastUpdated, setLastUpdated] = useState<string>('Live Calibrated Feed');
+
+  const [streamTelemetry, setStreamTelemetry] = useState<{
+    status: string;
+    total_live_vessels_tracked: number;
+    service: string;
+    vessels?: any[];
+  } | null>(null);
+
+  const computeDistanceNm = (lat1: number, lon1: number, lat2: number, lon2: number): number => {
+    if (!lat1 || !lon1 || !lat2 || !lon2) return 10.0;
+    const R = 3440.065; // Earth radius in nautical miles
+    const dLat = ((lat2 - lat1) * Math.PI) / 180;
+    const dLon = ((lon2 - lon1) * Math.PI) / 180;
+    const a =
+      Math.sin(dLat / 2) * Math.sin(dLat / 2) +
+      Math.cos((lat1 * Math.PI) / 180) * Math.cos((lat2 * Math.PI) / 180) *
+      Math.sin(dLon / 2) * Math.sin(dLon / 2);
+    const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+    return Math.round(R * c * 10) / 10;
+  };
+
+  const fetchLiveAIS = async () => {
+    setIsLoading(true);
+    try {
+      const statusRes = await fetch('/api/v1/ais/stream-status');
+      if (statusRes.ok) {
+        const sData = await statusRes.json();
+        setStreamTelemetry(sData);
+      }
+
+      const lat = activeScenario?.lat || 18.743;
+      const lng = activeScenario?.lng || 71.218;
+      const delta = 1.0;
+      const url = `/api/v1/ais/live?latmin=${lat - delta}&latmax=${lat + delta}&lonmin=${lng - delta}&lonmax=${lng + delta}${aishubUsername ? `&username=${aishubUsername}` : ''}`;
+      const liveRes = await fetch(url);
+      if (liveRes.ok) {
+        const lData = await liveRes.json();
+        if (lData.source) {
+          setFeedSource(lData.source === 'AISSTREAM_LIVE_WEBSOCKET' ? 'AISStream.io Live Indian EEZ WebSocket' : 'AISHub Maritime Transponder Engine');
+        }
+      }
+      setLastUpdated(new Date().toLocaleTimeString());
+    } catch (err) {
+      console.warn('AIS live fetch notice:', err);
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    fetchLiveAIS();
+    const interval = setInterval(fetchLiveAIS, 10000);
+    return () => clearInterval(interval);
+  }, [activeScenario, aishubUsername]);
 
   // Synchronize when currentScenario changes from external sources
   useEffect(() => {
@@ -580,21 +634,29 @@ export const AttributionView: React.FC<AttributionViewProps> = ({ currentScenari
   ): { score: number; risk: 'CRITICAL' | 'HIGH' | 'MEDIUM' | 'LOW'; metrics: any } => {
     const sumW = (w.dist || 0) + (w.time || 0) + (w.gap || 0) + (w.type || 0) || 1.0;
 
+    // Use realistic distance to incident
+    const cpa = (v.cpa_nm !== undefined && v.cpa_nm > 0)
+      ? v.cpa_nm
+      : (v.lat && v.lng && activeScenario?.lat && activeScenario?.lng)
+      ? computeDistanceNm(v.lat, v.lng, activeScenario.lat, activeScenario.lng)
+      : 12.0;
+
     // Spatial score (closer CPA -> higher suspicion: 0nm -> 1.0, 15nm -> 0.0)
-    const sDist = Math.max(0.0, Math.min(1.0, 1.0 - v.cpa_nm / 15.0));
+    const sDist = Math.max(0.0, Math.min(1.0, 1.0 - cpa / 15.0));
 
     // Time alignment score (closer to reverse discharge window -> higher suspicion: 0h -> 1.0, 6h -> 0.0)
-    const timeDelta = v.time_delta_hours ?? (v.cpa_nm < 2 ? 0.35 : v.cpa_nm < 5 ? 1.8 : 4.5);
+    const timeDelta = v.time_delta_hours ?? (cpa < 2 ? 0.35 : cpa < 5 ? 1.8 : 4.5);
     const sTime = Math.max(0.05, Math.min(1.0, 1.0 - timeDelta / 6.0));
 
     // Dark Ship AIS silence gap (larger gap -> higher suspicion: >=4h -> 1.0)
-    const sGap = Math.max(0.0, Math.min(1.0, v.ais_gap_hours / 4.0));
+    const gapHours = v.ais_gap_hours ?? 0;
+    const sGap = Math.max(0.0, Math.min(1.0, gapHours / 4.0));
 
     // Vessel risk prior based on ship category
-    const t = v.type.toLowerCase();
-    const sType = t.includes('crude') || t.includes('dark')
+    const t = (v.type || '').toLowerCase();
+    const sType = t.includes('crude') || t.includes('dark') || t.includes('vlcc')
       ? 0.95
-      : t.includes('product') || t.includes('bunker')
+      : t.includes('product') || t.includes('bunker') || t.includes('aframax')
       ? 0.85
       : t.includes('chemical')
       ? 0.70
@@ -629,10 +691,48 @@ export const AttributionView: React.FC<AttributionViewProps> = ({ currentScenari
     };
   };
 
-  // Instant real-time candidate vessel scoring and ranking (Zero-latency when adjusting sliders)
+  // FORENSIC INCIDENT SUSPECTS (For Active Spill AOI)
   const candidates: CandidateVesselItem[] = useMemo(() => {
-    const baseList = DEFAULT_SCENARIO_VESSELS[incidentId] || DEFAULT_SCENARIO_VESSELS['INC-2026-001'];
-    return baseList
+    // Scenario-specific suspects evaluated in forensic envelope
+    const scenarioSuspects = (DEFAULT_SCENARIO_VESSELS[incidentId] || DEFAULT_SCENARIO_VESSELS['INC-2026-001'] || []).map(v => ({ ...v }));
+
+    // If live AISStream has detected active commercial tankers/cargo in the AOI/vicinity of this scenario
+    const aoiLat = activeScenario?.lat || 18.743;
+    const aoiLng = activeScenario?.lng || 71.218;
+
+    const liveNearbyVessels: CandidateVesselItem[] = [];
+    if (streamTelemetry?.vessels && streamTelemetry.vessels.length > 0) {
+      streamTelemetry.vessels.forEach((v) => {
+        const dist = computeDistanceNm(v.lat, v.lng, aoiLat, aoiLng);
+        // Only include live vessels that are within 35 nm of this spill centroid
+        if (dist <= 35.0) {
+          // Avoid duplicate MMSIs if already in scenarioSuspects
+          if (!scenarioSuspects.some(s => s.mmsi === String(v.mmsi))) {
+            const vType = v.type || 'Commercial Vessel';
+            liveNearbyVessels.push({
+              mmsi: String(v.mmsi),
+              imo: String(v.imo || 'N/A'),
+              name: v.name || `LIVE-${v.mmsi}`,
+              flag: v.flag || 'Indian Waters',
+              type: vType,
+              lat: v.lat,
+              lng: v.lng,
+              sog: typeof v.sog === 'number' ? Math.round(v.sog * 10) / 10 : 0,
+              cog: typeof v.cog === 'number' ? Math.round(v.cog) : 0,
+              cpa_nm: dist,
+              ais_gap_hours: 0.1,
+              time_delta_hours: 0.5,
+              attribution_score: 0.5,
+              risk: 'MEDIUM',
+            });
+          }
+        }
+      });
+    }
+
+    const combinedList = [...scenarioSuspects, ...liveNearbyVessels];
+
+    return combinedList
       .map((v) => {
         const { score, risk, metrics } = computeVesselScore(v, weights);
         return {
@@ -643,14 +743,10 @@ export const AttributionView: React.FC<AttributionViewProps> = ({ currentScenari
         };
       })
       .sort((a, b) => b.attribution_score - a.attribution_score);
-  }, [incidentId, weights]);
+  }, [incidentId, weights, streamTelemetry, activeScenario]);
 
   const handleRecalculate = () => {
-    setIsLoading(true);
-    setLastUpdated(new Date().toLocaleTimeString());
-    setTimeout(() => {
-      setIsLoading(false);
-    }, 300);
+    fetchLiveAIS();
   };
 
   const handleSaveUsername = (uname: string) => {
@@ -1095,11 +1191,31 @@ export const AttributionView: React.FC<AttributionViewProps> = ({ currentScenari
             <div className="pane-header">
               <span className="pane-title">
                 <span className="material-symbols-outlined" style={{ fontSize: 18, color: 'var(--accent)' }}>format_list_numbered</span>
-                Ranked Suspect Vessels ({candidates.length} Screened)
+                Ranked Suspect Vessels (AOI Spatiotemporal Envelope)
               </span>
               <span className="text-xs text-muted">
                 Updated: {lastUpdated}
               </span>
+            </div>
+
+            {/* AISStream Live Surveillance Status Banner */}
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '8px 12px', background: 'var(--bg-raised)', borderRadius: 8, marginBottom: 12, border: '1px solid var(--border-subtle)', flexWrap: 'wrap', gap: 8 }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                <span className={`status-dot ${streamTelemetry?.status === 'ONLINE' ? 'dot-live' : 'dot-ready'}`} style={{ width: 8, height: 8 }} />
+                <span style={{ fontSize: 11, fontWeight: 700, color: streamTelemetry?.status === 'ONLINE' ? '#10B981' : 'var(--text-muted)' }}>
+                  {streamTelemetry?.status === 'ONLINE' ? 'AISStream Indian EEZ Feed: Active' : 'AIS Feed Standby'}
+                </span>
+                {streamTelemetry?.total_live_vessels_tracked !== undefined && (
+                  <span style={{ fontSize: 10, background: 'rgba(16, 185, 129, 0.15)', color: '#10B981', padding: '1px 8px', borderRadius: 12, fontWeight: 700 }}>
+                    {streamTelemetry.total_live_vessels_tracked} Commercial Polluters Monitored
+                  </span>
+                )}
+              </div>
+
+              <div style={{ fontSize: 11, color: 'var(--text-muted)', display: 'flex', alignItems: 'center', gap: 4 }}>
+                <span className="material-symbols-outlined" style={{ fontSize: 14, color: 'var(--accent)' }}>radar</span>
+                <span>Spill AOI Envelope: <strong>35 nm Radius</strong></span>
+              </div>
             </div>
 
             <div style={{ display: 'flex', flexDirection: 'column', gap: 10, overflowY: 'auto' }}>
@@ -1109,7 +1225,7 @@ export const AttributionView: React.FC<AttributionViewProps> = ({ currentScenari
 
                 return (
                   <div
-                    key={v.mmsi}
+                    key={`${v.mmsi}-${idx}`}
                     className={`vessel-candidate-card ${riskClass}`}
                   >
                     <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
@@ -1174,9 +1290,9 @@ export const AttributionView: React.FC<AttributionViewProps> = ({ currentScenari
                         <span className="text-muted">Heading: </span>
                         <strong>{v.cog}°</strong>
                       </div>
-                      <div style={{ color: v.ais_gap_hours > 2.0 ? '#f59e0b' : 'inherit' }}>
+                      <div style={{ color: (v.ais_gap_hours || 0) > 2.0 ? '#f59e0b' : 'inherit' }}>
                         <span className="text-muted">AIS Gap: </span>
-                        <strong>{v.ais_gap_hours}h</strong>
+                        <strong>{v.ais_gap_hours || 0}h</strong>
                       </div>
                     </div>
 
@@ -1225,7 +1341,6 @@ export const AttributionView: React.FC<AttributionViewProps> = ({ currentScenari
                           </div>
                         </div>
 
-                        {/* Weighted Contribution Stacked Bar */}
                         <div style={{ display: 'flex', height: 4, borderRadius: 2, overflow: 'hidden', background: 'var(--border-subtle)' }} title={`Weighted breakdown: Spatial (+${v.metrics.weighted_dist_val}) + Time (+${v.metrics.weighted_time_val}) + Gap (+${v.metrics.weighted_gap_val}) + Prior (+${v.metrics.weighted_type_val}) = ${v.attribution_score.toFixed(2)}`}>
                           <div style={{ width: `${((v.metrics.weighted_dist_val || 0) / v.attribution_score) * 100}%`, background: 'var(--accent)' }} />
                           <div style={{ width: `${((v.metrics.weighted_time_val || 0) / v.attribution_score) * 100}%`, background: '#10b981' }} />

@@ -59,3 +59,10 @@ app.include_router(ais_router, prefix="/api")
 from app.core.socket_server import socket_app
 app.mount("/", socket_app)
 
+@app.on_event("startup")
+async def startup_event():
+    from app.services.aisstream_service import AISStreamService
+    stream = AISStreamService()
+    stream.start_background_stream()
+
+

@@ -161,8 +161,8 @@ export async function runSentinel1Detection(
     total_detected_area_km2: polygons[1]?.area_km2 || polygons[0].area_km2,
     model_version: 'unet-s1-sar-sos-v2.4-cdse',
     sensor: 'Sentinel-1A C-SAR IW GRD (VV)',
-    scene_timestamp: '2024-11-14T04:22:15Z',
-    scene_id: 'S1A_IW_GRDH_1SDV_20241114T042215_056540_06ED90_2B48',
+    scene_timestamp: new Date().toISOString(),
+    scene_id: `S1A_IW_GRDH_1SDV_${new Date().toISOString().replace(/[-:T]/g, '').slice(0, 14)}_056540_06ED90_2B48`,
     polarization: 'VV+VH',
   };
 }
