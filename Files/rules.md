@@ -95,6 +95,7 @@ This document is the **strict operating manual** for any coding agent (Antigravi
 
 - Use meaningful, scoped commit messages describing what changed and why.
 - Avoid sprawling commits that mix unrelated domain modules.
+- **Never put or add the live website / deployment link in the GitHub repository's "About" section or metadata.**
 
 ## 14. Dependencies
 
@@ -110,6 +111,7 @@ This document is the **strict operating manual** for any coding agent (Antigravi
 
 - Architectural changes require documentation updates in the same change set — not a follow-up "later" task.
 - All eight project documents (`prd.md`, `tech_stack.md`, `AppFlow.md`, `design.md`, `schema.md`, `implementationPlan.md`, `Tracker.md`, `rules.md`) must remain mutually consistent (terminology, database names, API paths, service names, technologies, module names, architecture, feature scope, priorities, workflows). When detailed information is defined in one document, reference it — do not duplicate a conflicting version elsewhere.
+- **Do not put the website or deployment link in the "About" section**, repository metadata, or public overview documentation. Keep live deployment URLs confidential and out of public about blocks.
 
 ## 16. Agent Workflow
 
