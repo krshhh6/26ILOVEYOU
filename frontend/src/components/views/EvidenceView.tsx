@@ -1,5 +1,6 @@
 import React, { useState, useMemo } from 'react';
 import type { Scenario } from '../../types/dashboard';
+import { SCENARIOS } from '../../data/scenarios';
 import {
   generateDeterministicHash,
   formatHashChunks,
@@ -11,19 +12,51 @@ import type { ForensicArtifactItem } from '../../utils/forensicHash';
 interface EvidenceViewProps {
   onOpenForensicModal: () => void;
   currentScenario?: Scenario | null;
+  onSelectScenario?: (key: string) => void;
+  scenarios?: Record<string, Scenario>;
 }
 
-export const EvidenceView: React.FC<EvidenceViewProps> = ({ onOpenForensicModal, currentScenario }) => {
+export const EvidenceView: React.FC<EvidenceViewProps> = ({
+  onOpenForensicModal,
+  currentScenario,
+  onSelectScenario,
+  scenarios,
+}) => {
+  // Available scenarios map
+  const availableScenarios = useMemo(() => scenarios || SCENARIOS, [scenarios]);
+
+  // Determine active scenario key
+  const activeKey = useMemo(() => {
+    if (currentScenario) {
+      const match = Object.entries(availableScenarios).find(
+        ([k, sc]) => sc.id === currentScenario.id || k === currentScenario.id
+      );
+      if (match) return match[0];
+    }
+    return Object.keys(availableScenarios)[0] || 'INC-001';
+  }, [currentScenario, availableScenarios]);
+
+  const activeScenario = useMemo(() => {
+    return (
+      currentScenario ||
+      availableScenarios[activeKey] ||
+      availableScenarios['INC-001'] ||
+      Object.values(availableScenarios)[0]
+    );
+  }, [currentScenario, availableScenarios, activeKey]);
+
   // Active Sub-Tab: 'manifest' | 'artifacts' | 'dossier'
   const [activeSubTab, setActiveSubTab] = useState<'manifest' | 'artifacts' | 'dossier'>('manifest');
 
   // Dynamic deterministic master hash based on active scenario
   const scenarioKey = useMemo(() => {
-    return (currentScenario?.id || 'INC-2026-005') + 
-      (currentScenario?.title || 'Maritime Sector') + 
-      (currentScenario?.lat || 22.61) + 
-      (currentScenario?.lng || 69.5);
-  }, [currentScenario]);
+    return (
+      (activeScenario?.id || 'INC-2026-001') +
+      (activeScenario?.title || 'Maritime Sector') +
+      (activeScenario?.lat || 18.74) +
+      (activeScenario?.lng || 71.21)
+    );
+  }, [activeScenario]);
 
   const masterHash = useMemo(() => generateDeterministicHash(scenarioKey), [scenarioKey]);
   const hashChunks = useMemo(() => formatHashChunks(masterHash), [masterHash]);
@@ -50,13 +83,13 @@ export const EvidenceView: React.FC<EvidenceViewProps> = ({ onOpenForensicModal,
 
   // Milestones & Artifacts linked dynamically to active scenario
   const milestones = useMemo(
-    () => getForensicMilestones(currentScenario, officerSignOff),
-    [currentScenario, officerSignOff]
+    () => getForensicMilestones(activeScenario, officerSignOff),
+    [activeScenario, officerSignOff]
   );
 
   const artifacts = useMemo(
-    () => getForensicArtifacts(currentScenario, masterHash),
-    [currentScenario, masterHash]
+    () => getForensicArtifacts(activeScenario, masterHash),
+    [activeScenario, masterHash]
   );
 
   const totalPackageSizeKb = useMemo(
@@ -98,25 +131,10 @@ export const EvidenceView: React.FC<EvidenceViewProps> = ({ onOpenForensicModal,
     const matched = artifacts.find((a) => a.fileName === fileName);
     const content = matched
       ? matched.contentGenerator(
-          currentScenario || {
-            id: 'INC-2026-005',
-            title: 'Gulf of Kutch Deepwater Tanker Fairway',
-            lat: 22.61,
-            lng: 69.5,
-            topVessel: 'MT Ocean Trader',
-            diagVessel: 'MT Ocean Trader',
-            diagDetails: 'AIS Silence',
-            oilType: 'Crude Oil',
-            oilColor: '#ef4444',
-            oilFill: 'rgba(239, 68, 68, 0.4)',
-            sev: 'CRITICAL',
-            sevClass: 'chip-c',
-            sub: 'Indian EEZ',
-            scores: [0.86],
-          },
+          activeScenario,
           masterHash
         )
-      : `SpillSense Forensic Record · ${fileName}\nIncident: ${currentScenario?.id || 'INC-005'}\nHash: ${masterHash}\nSection 63 BSA 2023 Certified`;
+      : `SpillSense Forensic Record · ${fileName}\nIncident: ${activeScenario?.id || 'INC-001'}\nHash: ${masterHash}\nSection 63 BSA 2023 Certified`;
 
     let mimeType = 'text/plain';
     if (fileName.endsWith('.geojson')) mimeType = 'application/geo+json;charset=utf-8';
@@ -226,7 +244,7 @@ export const EvidenceView: React.FC<EvidenceViewProps> = ({ onOpenForensicModal,
                 whiteSpace: 'nowrap',
               }}
             >
-              {currentScenario?.id || 'INC-2026-005'} · {currentScenario?.title || 'Active Surveillance'}
+              {activeScenario?.id || 'INC-2026-001'} · {activeScenario?.title || 'Active Surveillance'}
             </span>
           </div>
           <h1 className="workspace-main-title" style={{ fontSize: 20, fontWeight: 800, margin: 0, letterSpacing: '-0.02em', whiteSpace: 'nowrap' }}>
@@ -238,6 +256,51 @@ export const EvidenceView: React.FC<EvidenceViewProps> = ({ onOpenForensicModal,
         </div>
 
         <div className="workspace-header-actions" style={{ display: 'flex', alignItems: 'center', gap: 8, flexShrink: 0 }}>
+          {/* INCIDENT SWITCHER DROPDOWN */}
+          <div style={{ position: 'relative', display: 'inline-flex', alignItems: 'center' }}>
+            <span
+              className="material-symbols-outlined"
+              style={{
+                position: 'absolute',
+                left: 9,
+                fontSize: 15,
+                color: 'var(--accent)',
+                pointerEvents: 'none',
+              }}
+            >
+              emergency
+            </span>
+            <select
+              value={activeKey}
+              onChange={(e) => {
+                const k = e.target.value;
+                onSelectScenario?.(k);
+              }}
+              style={{
+                height: 32,
+                padding: '0 24px 0 28px',
+                borderRadius: 8,
+                fontSize: 11.5,
+                fontWeight: 600,
+                color: 'var(--text-primary)',
+                background: 'var(--bg-raised)',
+                border: '1px solid var(--border-default)',
+                cursor: 'pointer',
+                appearance: 'auto',
+                outline: 'none',
+                maxWidth: 240,
+                whiteSpace: 'nowrap',
+              }}
+              title="Select Active Incident Dossier"
+            >
+              {Object.entries(availableScenarios).map(([key, sc]) => (
+                <option key={key} value={key}>
+                  {sc.id} · {sc.title}
+                </option>
+              ))}
+            </select>
+          </div>
+
           <button
             className="action-pill-btn secondary"
             onClick={handleCopySignature}
@@ -1029,7 +1092,7 @@ export const EvidenceView: React.FC<EvidenceViewProps> = ({ onOpenForensicModal,
                 Statutory Certificate under Section 63, Bharatiya Sakshya Adhiniyam (BSA) 2023 &amp; Section 65B, Indian Evidence Act
               </div>
               <div className="mono text-xs text-muted" style={{ marginTop: 4 }}>
-                Dossier Ref: ICG/MRCC/2026/SS-{currentScenario?.id || 'INC-005'} · Classification: RESTRICTED // INVESTIGATIVE DECISION-SUPPORT
+                Dossier Ref: ICG/MRCC/2026/SS-{activeScenario?.id || 'INC-001'} · Classification: RESTRICTED // INVESTIGATIVE DECISION-SUPPORT
               </div>
             </div>
 
@@ -1066,10 +1129,10 @@ export const EvidenceView: React.FC<EvidenceViewProps> = ({ onOpenForensicModal,
                 fontSize: 11.5,
               }}
             >
-              <div><strong>Incident Identifier:</strong> <span className="mono">{currentScenario?.id || 'INC-2026-005'}</span></div>
-              <div><strong>Operational Sector:</strong> <span className="mono">{currentScenario?.title || 'Gulf of Kutch Fairway'}</span></div>
-              <div><strong>Centroid Coordinate:</strong> <span className="mono">{(currentScenario?.lat || 22.61).toFixed(5)}°N, {(currentScenario?.lng || 69.5).toFixed(5)}°E</span></div>
-              <div><strong>Derived Surface Footprint:</strong> <span className="mono">{currentScenario?.area || '19.67 km²'}</span></div>
+              <div><strong>Incident Identifier:</strong> <span className="mono">{activeScenario?.id || 'INC-2026-001'}</span></div>
+              <div><strong>Operational Sector:</strong> <span className="mono">{activeScenario?.title || 'Mumbai High Offshore Basin'}</span></div>
+              <div><strong>Centroid Coordinate:</strong> <span className="mono">{(activeScenario?.lat || 18.74).toFixed(5)}°N, {(activeScenario?.lng || 71.21).toFixed(5)}°E</span></div>
+              <div><strong>Derived Surface Footprint:</strong> <span className="mono">{activeScenario?.area || '4.82 km²'}</span></div>
               <div><strong>Sensor Mission:</strong> <span className="mono">Sentinel-1A IW GRD (Copernicus C-SAR)</span></div>
               <div><strong>MetOcean Forcing:</strong> <span className="mono">ERA5 4.2 m/s · CMEMS 0.34 kn Surface Current</span></div>
             </div>
@@ -1094,17 +1157,19 @@ export const EvidenceView: React.FC<EvidenceViewProps> = ({ onOpenForensicModal,
                   <tr>
                     <td style={{ padding: '6px 8px', border: '1px solid var(--border-subtle)', fontWeight: 700, color: 'var(--accent)' }}>#1 PRIMARY</td>
                     <td style={{ padding: '6px 8px', border: '1px solid var(--border-subtle)', fontWeight: 700 }}>
-                      {currentScenario?.topVessel || 'MT Ocean Trader'}
+                      {activeScenario?.topVessel || 'Suspect Tanker'}
                     </td>
                     <td style={{ padding: '6px 8px', border: '1px solid var(--border-subtle)', fontFamily: 'monospace' }}>
-                      419001234 / 9412345
+                      {activeScenario?.diagVessel ? activeScenario.diagVessel.replace(/^[^·]*·\s*/, '') : 'MMSI 419001234'}
                     </td>
-                    <td style={{ padding: '6px 8px', border: '1px solid var(--border-subtle)' }}>Liberia · Crude Tanker</td>
+                    <td style={{ padding: '6px 8px', border: '1px solid var(--border-subtle)' }}>
+                      {activeScenario?.oilType || 'Crude Oil'} Carrier · Indian EEZ
+                    </td>
                     <td style={{ padding: '6px 8px', border: '1px solid var(--border-subtle)', fontFamily: 'monospace', fontWeight: 800, color: '#ef4444' }}>
-                      0.86 / 1.00
+                      {activeScenario?.scores?.[0] ? `${activeScenario.scores[0].toFixed(2)} / 1.00` : '0.86 / 1.00'}
                     </td>
                     <td style={{ padding: '6px 8px', border: '1px solid var(--border-subtle)', color: 'var(--text-secondary)', fontSize: 10.5 }}>
-                      {currentScenario?.diagDetails || 'Intentional AIS silence gap (4.2 hrs) crossing Lagrangian origin contour'}
+                      {activeScenario?.diagDetails || 'Intentional AIS silence gap crossing Lagrangian origin contour'}
                     </td>
                   </tr>
                 </tbody>
@@ -1209,7 +1274,7 @@ export const EvidenceView: React.FC<EvidenceViewProps> = ({ onOpenForensicModal,
                   className="action-pill-btn secondary"
                   onClick={() => {
                     const text = previewArtifact.contentGenerator(
-                      currentScenario || ({} as Scenario),
+                      activeScenario,
                       masterHash
                     );
                     handleCopyText(text, previewArtifact.fileName);
@@ -1253,7 +1318,7 @@ export const EvidenceView: React.FC<EvidenceViewProps> = ({ onOpenForensicModal,
                 }}
               >
                 {previewArtifact.contentGenerator(
-                  currentScenario || ({} as Scenario),
+                  activeScenario,
                   masterHash
                 )}
               </div>

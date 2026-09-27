@@ -278,6 +278,8 @@ export const App: React.FC = () => {
             <EvidenceView
               onOpenForensicModal={() => setIsForensicOpen(true)}
               currentScenario={scenario}
+              onSelectScenario={handleSelectScenario}
+              scenarios={scenarios}
             />
           )}
 
