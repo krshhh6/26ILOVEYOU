@@ -607,11 +607,17 @@ export const EvidenceView: React.FC<EvidenceViewProps> = ({ onOpenForensicModal,
                       <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
                         <span className="material-symbols-outlined" style={{ color: art.iconColor, fontSize: 20 }}>{art.icon}</span>
                         <div>
-                          <div style={{ fontSize: 12, fontWeight: 700, color: 'var(--text-primary)', fontFamily: 'JetBrains Mono, monospace' }}>
-                            {art.fileName}
+                          <div style={{ fontSize: 12.5, fontWeight: 700, color: 'var(--text-primary)' }}>
+                            {art.title}
                           </div>
-                          <div style={{ fontSize: 10.5, color: 'var(--text-muted)', marginTop: 2 }}>
-                            {art.crs} · {art.sizeKb.toFixed(1)} KB
+                          <div style={{ fontSize: 10.5, color: 'var(--text-muted)', marginTop: 2, display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
+                            <span className="mono" style={{ color: 'var(--text-secondary)', background: 'var(--bg-base)', padding: '1px 5px', borderRadius: 4, border: '1px solid var(--border-subtle)' }}>
+                              {art.fileName}
+                            </span>
+                            <span>·</span>
+                            <span>{art.crs}</span>
+                            <span>·</span>
+                            <span>{art.sizeKb.toFixed(1)} KB</span>
                           </div>
                         </div>
                       </div>
@@ -920,11 +926,17 @@ export const EvidenceView: React.FC<EvidenceViewProps> = ({ onOpenForensicModal,
                       <span className="material-symbols-outlined" style={{ fontSize: 18 }}>{art.icon}</span>
                     </div>
                     <div>
-                      <div style={{ fontSize: 12, fontWeight: 700, color: 'var(--text-primary)', fontFamily: 'monospace' }}>
-                        {art.fileName}
+                      <div style={{ fontSize: 13, fontWeight: 700, color: 'var(--text-primary)' }}>
+                        {art.title}
                       </div>
-                      <div style={{ fontSize: 9.5, color: 'var(--text-muted)' }}>
-                        {art.crs} · {art.sizeKb.toFixed(1)} KB
+                      <div style={{ fontSize: 10, color: 'var(--text-muted)', marginTop: 2, display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
+                        <span className="mono" style={{ color: 'var(--text-secondary)', background: 'var(--bg-base)', padding: '1px 5px', borderRadius: 4, border: '1px solid var(--border-subtle)' }}>
+                          {art.fileName}
+                        </span>
+                        <span>·</span>
+                        <span>{art.crs}</span>
+                        <span>·</span>
+                        <span>{art.sizeKb.toFixed(1)} KB</span>
                       </div>
                     </div>
                   </div>
@@ -1182,9 +1194,14 @@ export const EvidenceView: React.FC<EvidenceViewProps> = ({ onOpenForensicModal,
                 <span className="material-symbols-outlined" style={{ color: previewArtifact.iconColor }}>
                   {previewArtifact.icon}
                 </span>
-                <span style={{ fontSize: 13, fontWeight: 700, fontFamily: 'monospace' }}>
-                  {previewArtifact.fileName}
-                </span>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
+                  <span style={{ fontSize: 13, fontWeight: 700, color: 'var(--text-primary)' }}>
+                    {previewArtifact.title}
+                  </span>
+                  <span className="mono" style={{ fontSize: 11, color: 'var(--text-secondary)', background: 'var(--bg-base)', padding: '1px 6px', borderRadius: 4, border: '1px solid var(--border-subtle)' }}>
+                    {previewArtifact.fileName}
+                  </span>
+                </div>
                 <span className="scenario-chip" style={{ fontSize: 9.5 }}>{previewArtifact.crs}</span>
               </div>
               <div className="flex items-center gap-2 modal-actions">

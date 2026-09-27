@@ -49,6 +49,7 @@ export interface ForensicMilestone {
 
 export interface ForensicArtifactItem {
   id: string;
+  title: string;
   fileName: string;
   type: 'geojson' | 'gpkg' | 'xml' | 'netcdf';
   sizeKb: number;
@@ -140,6 +141,7 @@ export function getForensicArtifacts(scenario?: Scenario | null, _masterHash?: s
   return [
     {
       id: 'art-1',
+      title: 'Calibrated Oil Slick Detection Mask',
       fileName: 'slick_detection_polygon.geojson',
       type: 'geojson',
       sizeKb: 14.8,
@@ -212,6 +214,7 @@ export function getForensicArtifacts(scenario?: Scenario | null, _masterHash?: s
     },
     {
       id: 'art-2',
+      title: 'Spill Origin Probability Contours (50%, 75%, 90%)',
       fileName: 'origin_probability_envelopes.geojson',
       type: 'geojson',
       sizeKb: 39.2,
@@ -271,6 +274,7 @@ export function getForensicArtifacts(scenario?: Scenario | null, _masterHash?: s
     },
     {
       id: 'art-3',
+      title: 'Correlated AIS Vessel Trajectories & Silence Gaps',
       fileName: 'ais_candidate_trajectories.gpkg',
       type: 'gpkg',
       sizeKb: 228.4,
@@ -283,6 +287,7 @@ export function getForensicArtifacts(scenario?: Scenario | null, _masterHash?: s
     },
     {
       id: 'art-4',
+      title: 'Satellite Sensor Radiometric Calibration Header',
       fileName: 'sentinel1_calibration_metadata.xml',
       type: 'xml',
       sizeKb: 18.6,
