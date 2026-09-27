@@ -41,3 +41,6 @@ ml/cache_patches/
 # Root junctions for standalone static dashboard
 /demo-sar
 /imagery
+
+# Temporary
+README.md
