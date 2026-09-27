@@ -386,3 +386,246 @@ export function computeBackwardDriftGeometry(
     coastalBoundary,
   };
 }
+
+// ────────────────────────────────────────────────────────────────────────────
+// REALISTIC MULTI-POINT AIS KINEMATIC TRACK ENGINE
+// Generates per-scenario vessel AIS waypoints with dead-reckoning positions,
+// Speed Over Ground (SOG), Course Over Ground (COG), timestamps, and AIS
+// broadcast status — used to render speed-heatmap track segments on the map.
+// ────────────────────────────────────────────────────────────────────────────
+
+export interface AISTrackPoint {
+  coord: [number, number];
+  sog: number;           // Speed Over Ground in knots
+  cog: number;           // Course Over Ground in degrees (0–360)
+  timeLabel: string;     // e.g. "T−36h", "T−22h", "T=0h"
+  aisStatus: 'active' | 'silent' | 'gap';
+}
+
+/**
+ * Maps a vessel's Speed Over Ground and AIS status to a track segment color.
+ * Active (broadcasting) segments are colored by speed; silent segments are red.
+ */
+export function sogToColor(sog: number, aisStatus: string): string {
+  if (aisStatus === 'silent') return '#DC2626';   // red — AIS transponder OFF (dark vessel)
+  if (aisStatus === 'gap')    return '#EF4444';   // light-red — intermittent / suspicious gap
+  if (sog >= 10)  return '#3B82F6';               // blue — full transit speed (>10 kn)
+  if (sog >= 6)   return '#06B6D4';               // cyan — normal approach (6–10 kn)
+  if (sog >= 2.5) return '#F59E0B';               // amber — suspicious slow (2.5–6 kn)
+  return '#EF4444';                               // red — near-stopped / discharging (<2.5 kn)
+}
+
+/**
+ * Generates a realistic multi-waypoint AIS kinematic track for a given scenario.
+ * Waypoints span T−36h → T=0h (SAR detection epoch) using vessel heading and
+ * origin (discharge) coordinates as the spatial anchor.
+ *
+ * @param scenarioId  Scenario ID string (contains '001'..'008')
+ * @param originLat   Latitude of the computed discharge origin (T−22h)
+ * @param originLng   Longitude of the computed discharge origin (T−22h)
+ * @param heading     Vessel Course Over Ground in degrees (0–360)
+ */
+export function getRealisticAISTrack(
+  scenarioId: string,
+  originLat: number,
+  originLng: number,
+  heading: number
+): AISTrackPoint[] {
+  const headingRad = (heading * Math.PI) / 180;
+  const dLatUnit = Math.cos(headingRad);   // unit step in lat along heading
+  const dLngUnit = Math.sin(headingRad);   // unit step in lng along heading
+
+  // upstream = distance upstream of origin (positive = behind / pre-discharge)
+  // cross    = perpendicular offset (simulate slight course deviations)
+  type WPDef = [upstream: number, cross: number, sog: number, timeLabel: string, status: 'active' | 'silent' | 'gap'];
+
+  let wps: WPDef[];
+
+  if (scenarioId.includes('001')) {
+    // CRUDE ATLAS | Mumbai High | 18.743°N 71.218°E | 135° SE | VLCC crude tanker
+    // Approaches from NW (Vadinar/Kandla route), slows to 4.1kn during discharge,
+    // AIS goes silent for 6 hours before detection.
+    wps = [
+      [ 0.50,  0.04, 13.2, 'T−36h', 'active'],
+      [ 0.36,  0.02, 12.8, 'T−28h', 'active'],
+      [ 0.20,  0.01, 11.5, 'T−24h', 'active'],
+      [ 0.08,  0.00,  4.1, 'T−22h', 'gap'   ],  // ← DISCHARGE: speed drop 13→4 kn
+      [ 0.00,  0.00,  3.8, 'T−18h', 'silent'],  // origin — AIS OFF
+      [-0.09, -0.01,  2.1, 'T−13h', 'silent'],
+      [-0.18, -0.01,  1.5, 'T−8h',  'silent'],
+      [-0.28, -0.02, 11.2, 'T−2h',  'active'],  // AIS resumes, vessel speeds up
+      [-0.36, -0.03, 13.5, 'T=0h',  'active'],  // SAR detection epoch
+    ];
+  } else if (scenarioId.includes('002')) {
+    // PACIFIC GLORY | Chennai–Ennore | 13.250°N 80.460°E | ~20° NNE | Chemical/Oil tanker
+    // Northbound Coromandel coast fairway. Collision at T−22h. AIS intermittent.
+    wps = [
+      [ 0.46, -0.01, 14.2, 'T−36h', 'active'],
+      [ 0.33, -0.01, 13.8, 'T−28h', 'active'],
+      [ 0.18,  0.00, 13.0, 'T−24h', 'active'],
+      [ 0.07,  0.00,  6.2, 'T−22h', 'gap'   ],  // ← COLLISION: speed drop 13→6 kn
+      [ 0.00,  0.00,  4.5, 'T−18h', 'gap'   ],  // origin — AIS intermittent
+      [-0.09,  0.01,  3.2, 'T−14h', 'silent'],  // silent segment
+      [-0.19,  0.01,  8.5, 'T−8h',  'gap'   ],  // briefly re-broadcasts
+      [-0.29,  0.01, 12.1, 'T=0h',  'active'],  // SAR detection epoch
+    ];
+  } else if (scenarioId.includes('003')) {
+    // UNKNOWN DARK VESSEL | Andaman Sea SL-7 | 10.456°N 93.123°E | ~270° W | Full blackout
+    // Westbound Malacca approach. Full AIS blackout from T−22h through detection.
+    wps = [
+      [ 0.40, -0.01, 12.5, 'T−36h', 'active'],  // last known broadcast position
+      [ 0.26, -0.01, 12.0, 'T−28h', 'active'],
+      [ 0.12,  0.00, 11.5, 'T−24h', 'active'],
+      [ 0.00,  0.00,  3.5, 'T−22h', 'silent'],  // ← FULL DARK: AIS killed (MARPOL violation)
+      [-0.08,  0.00,  2.2, 'T−16h', 'silent'],
+      [-0.16,  0.01,  1.8, 'T−10h', 'silent'],
+      [-0.24,  0.01,  2.5, 'T−4h',  'silent'],
+      [-0.32,  0.01, 11.5, 'T=0h',  'silent'],  // SAR radar return — still dark
+    ];
+  } else if (scenarioId.includes('004')) {
+    // SEA PEARL | Goa Coastal Waters | 15.420°N 73.650°E | 165° SSE | Bunkering vessel
+    // At anchor bunkering — AIS always on, extremely slow (anchored). Hose failure.
+    wps = [
+      [ 0.38,  0.02, 10.5, 'T−36h', 'active'],
+      [ 0.26,  0.01, 10.2, 'T−28h', 'active'],
+      [ 0.14,  0.01,  9.8, 'T−24h', 'active'],
+      [ 0.06,  0.00,  1.2, 'T−22h', 'active'],  // ← AT ANCHOR: bunkering begins (AIS on, ~1kn drift)
+      [ 0.00,  0.00,  1.1, 'T−16h', 'active'],  // origin — hose rupture
+      [-0.04,  0.00,  1.3, 'T−10h', 'active'],  // still at anchor, maneuvering
+      [-0.12, -0.01,  8.5, 'T−4h',  'active'],  // departs anchorage
+      [-0.22, -0.01, 11.0, 'T=0h',  'active'],  // SAR detection epoch
+    ];
+  } else if (scenarioId.includes('005')) {
+    // AL KHALEEJ STAR | Gulf of Kutch / Vadinar SPM | 22.600°N 69.500°E | 80° ENE | VLCC
+    // Approaches Vadinar SPM terminal, moors, offloads with AIS gap, departs.
+    wps = [
+      [ 0.36,  0.02, 12.8, 'T−36h', 'active'],
+      [ 0.24,  0.01, 11.5, 'T−28h', 'active'],
+      [ 0.13,  0.01,  8.5, 'T−24h', 'active'],  // slowing for SPM approach
+      [ 0.04,  0.00,  1.8, 'T−22h', 'gap'   ],  // ← SPM ARRIVAL: mooring (AIS gap common at SPMs)
+      [ 0.00,  0.00,  0.5, 'T−18h', 'gap'   ],  // moored — offloading in progress
+      [-0.06, -0.01,  0.8, 'T−12h', 'gap'   ],  // still moored
+      [-0.14, -0.01,  9.5, 'T−6h',  'active'],  // departs SPM — AIS resumes
+      [-0.24, -0.02, 13.0, 'T=0h',  'active'],  // SAR detection epoch
+    ];
+  } else if (scenarioId.includes('006')) {
+    // OCEAN VOYAGER | Cochin Port SPM Anchorage | 9.960°N 76.080°E | 160° SSE | Product tanker
+    // Southbound Kerala coast fairway. Bunkering overflow. AIS intermittent.
+    wps = [
+      [ 0.40, -0.01, 11.2, 'T−36h', 'active'],
+      [ 0.28, -0.01, 10.8, 'T−28h', 'active'],
+      [ 0.15,  0.00,  9.5, 'T−24h', 'active'],
+      [ 0.06,  0.00,  1.2, 'T−22h', 'active'],  // ← BUNKERING: ~1kn drift, AIS on
+      [ 0.00,  0.00,  1.1, 'T−16h', 'active'],  // origin — overflow begins
+      [-0.06,  0.00,  1.3, 'T−10h', 'gap'   ],  // AIS goes intermittent
+      [-0.15, -0.01,  8.2, 'T−4h',  'active'],  // resumes, departs
+      [-0.24, -0.02, 11.5, 'T=0h',  'active'],  // SAR detection epoch
+    ];
+  } else if (scenarioId.includes('007')) {
+    // EASTERN GLORY | Paradip Offshore Basin | 20.250°N 86.720°E | 35° NE | Crude tanker
+    // Northeastbound Bay of Bengal. Pipeline pressure anomaly. AIS goes silent.
+    wps = [
+      [ 0.42, -0.01, 12.5, 'T−36h', 'active'],
+      [ 0.30, -0.01, 12.0, 'T−28h', 'active'],
+      [ 0.18,  0.00, 11.2, 'T−24h', 'active'],
+      [ 0.08,  0.00,  3.8, 'T−22h', 'gap'   ],  // ← ANOMALY: pressure drop, speed 12→4 kn
+      [ 0.00,  0.00,  2.5, 'T−18h', 'silent'],  // origin — AIS off
+      [-0.08,  0.01,  2.0, 'T−12h', 'silent'],
+      [-0.18,  0.01,  9.8, 'T−5h',  'active'],  // AIS resumes
+      [-0.27,  0.02, 12.8, 'T=0h',  'active'],  // SAR detection epoch
+    ];
+  } else {
+    // INC-008: Lakshadweep 9-Degree Channel | 8.500°N 73.000°E | 95° E | Eastbound ULCC
+    // East-West ULCC transit lane. Bilge discharge at low speed. Brief AIS gap.
+    wps = [
+      [ 0.44,  0.00, 14.5, 'T−36h', 'active'],
+      [ 0.32,  0.00, 14.2, 'T−28h', 'active'],
+      [ 0.18,  0.00, 13.8, 'T−24h', 'active'],
+      [ 0.08,  0.00,  4.5, 'T−22h', 'gap'   ],  // ← BILGE DISCHARGE: slows to ~4 kn
+      [ 0.00,  0.00,  3.8, 'T−14h', 'gap'   ],  // origin — bilge pump running
+      [-0.08,  0.00,  4.2, 'T−8h',  'gap'   ],  // still discharging
+      [-0.18,  0.00, 13.5, 'T−2h',  'active'],  // bilge complete, resumes transit speed
+      [-0.28,  0.00, 14.8, 'T=0h',  'active'],  // SAR detection epoch
+    ];
+  }
+
+  return wps.map(([upstream, cross, sog, timeLabel, aisStatus]) => {
+    const lat = originLat - dLatUnit * upstream + (-dLngUnit) * cross;
+    const lng = originLng - dLngUnit * upstream +   dLatUnit  * cross;
+    return {
+      coord: clampToNavigableWaters([lat, lng]),
+      sog,
+      cog: heading,
+      timeLabel,
+      aisStatus,
+    };
+  });
+}
+
+/**
+ * Interpolates vessel kinematic state and drift position at any given hour T (from -72h to 0h).
+ * Used by the time scrubber to animate vessel movement and oil drift along the Lagrangian path.
+ */
+export function interpolateKinematicsAtHour(
+  waypoints: AISTrackPoint[],
+  originCoord: [number, number],
+  currentCentroid: [number, number],
+  hour: number // e.g. -59, -22, -10, 0
+): {
+  vesselCoord: [number, number];
+  vesselSog: number;
+  vesselStatus: string;
+  spillCoord: [number, number];
+  isDischargeActive: boolean;
+} {
+  const parseHour = (tl: string): number => {
+    if (tl.includes('T=0')) return 0;
+    const match = tl.match(/T[−-](\d+)h/);
+    return match ? -parseInt(match[1], 10) : 0;
+  };
+
+  const wpWithHours = waypoints.map((wp) => ({
+    ...wp,
+    h: parseHour(wp.timeLabel),
+  })).sort((a, b) => a.h - b.h);
+
+  const minHour = wpWithHours[0]?.h ?? -36;
+  const clampedHour = Math.min(0, Math.max(minHour, hour));
+
+  let p1 = wpWithHours[0];
+  let p2 = wpWithHours[wpWithHours.length - 1];
+
+  for (let i = 0; i < wpWithHours.length - 1; i++) {
+    if (clampedHour >= wpWithHours[i].h && clampedHour <= wpWithHours[i + 1].h) {
+      p1 = wpWithHours[i];
+      p2 = wpWithHours[i + 1];
+      break;
+    }
+  }
+
+  const span = p2.h - p1.h;
+  const factor = span === 0 ? 0 : (clampedHour - p1.h) / span;
+
+  const vLat = p1.coord[0] + factor * (p2.coord[0] - p1.coord[0]);
+  const vLng = p1.coord[1] + factor * (p2.coord[1] - p1.coord[1]);
+  const vSog = p1.sog + factor * (p2.sog - p1.sog);
+  const vStatus = factor > 0.5 ? p2.aisStatus : p1.aisStatus;
+
+  let sLat = originCoord[0];
+  let sLng = originCoord[1];
+  const isDischargeActive = hour >= -24 && hour <= -18;
+
+  if (hour > -22) {
+    const driftRatio = Math.min(1.0, Math.max(0, (hour - (-22)) / 22));
+    sLat = originCoord[0] + driftRatio * (currentCentroid[0] - originCoord[0]);
+    sLng = originCoord[1] + driftRatio * (currentCentroid[1] - originCoord[1]);
+  }
+
+  return {
+    vesselCoord: [vLat, vLng],
+    vesselSog: vSog,
+    vesselStatus: vStatus,
+    spillCoord: [sLat, sLng],
+    isDischargeActive,
+  };
+}

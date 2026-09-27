@@ -2,6 +2,7 @@ import React, { useState, useEffect, useRef } from 'react';
 import type { Scenario, BaseLayerType, CopernicusLayerId, CopernicusLayerInfo, DetectionResult } from '../types/dashboard';
 import { LeafletMap } from './LeafletMap';
 import { TimeScrubber } from './TimeScrubber';
+import { CleanupModal } from './modals/CleanupModal';
 import { runSentinel1Detection } from '../services/detectionService';
 import { createAoiForScenario } from '../utils/geoContours';
 import { socket, connectSocket } from '../services/socket';
@@ -115,7 +116,7 @@ export const MapPanel: React.FC<MapPanelProps> = ({
   targetLocation,
 }) => {
   const [baseLayer2D, setBaseLayer2D] = useState<BaseLayerType>('arcgis');
-  const [showSeamarks, setShowSeamarks] = useState<boolean>(true);
+  const showSeamarks = false;
   const [selectedCopernicusLayer, setSelectedCopernicusLayer] = useState<CopernicusLayerId>('nisar-ls');
   const [activeSatellite, setActiveSatellite] = useState<string>('ISRO NISAR');
   const [showSpillOverlay, setShowSpillOverlay] = useState<boolean>(true);
@@ -135,6 +136,8 @@ export const MapPanel: React.FC<MapPanelProps> = ({
 
   const [layerOpacity, setLayerOpacity] = useState<number>(0.92);
   const [showAiMask, setShowAiMask] = useState<boolean>(true);
+  const [isCleanupModalOpen, setIsCleanupModalOpen] = useState<boolean>(false);
+  const [scrubHours, setScrubHours] = useState<number>(0);
   const [showRawImageModal, setShowRawImageModal] = useState<boolean>(false);
   const [modalZoom, setModalZoom] = useState<number>(1.0);
   const [selectedDate, setSelectedDate] = useState<string>(() => new Date().toISOString().split('T')[0]);
@@ -342,9 +345,8 @@ export const MapPanel: React.FC<MapPanelProps> = ({
     <div className="map-panel" style={{ flex: 1, width: '100%', height: '100%', minHeight: 0, display: 'flex', flexDirection: 'column' }}>
       {/* MINIMALIST MARITIME GIS TOOLBAR */}
       <div className="map-header" style={{ padding: '6px 12px', gap: 10, display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'nowrap', overflowX: 'auto', background: 'var(--bg-surface)', borderBottom: '1px solid var(--border-subtle)' }}>
-        {/* LEFT: Basemap & Sensor Mode Segmented Controls */}
+        {/* LEFT: Basemap Switcher */}
         <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexShrink: 0 }}>
-          {/* Basemap Switcher */}
           <div className="map-base-selector" style={{ display: 'flex', background: 'var(--bg-raised)', border: '1px solid var(--border-subtle)', borderRadius: 4, padding: 2 }}>
             <button
               className={`base-btn ${baseLayer2D === 'bhuvan' ? 'active' : ''}`}
@@ -379,49 +381,9 @@ export const MapPanel: React.FC<MapPanelProps> = ({
               Google Earth
             </button>
           </div>
-
-          <span style={{ color: 'var(--border-subtle)', fontSize: 12 }}>|</span>
-
-          {/* Optical vs SAR Sensor Switcher */}
-          <div style={{ display: 'flex', background: 'var(--bg-raised)', border: '1px solid var(--border-subtle)', borderRadius: 4, padding: 2 }}>
-            <button
-              className={`base-btn ${selectedCopernicusLayer === 'true-color' ? 'active' : ''}`}
-              onClick={() => handleSelectCopernicusLayer('true-color')}
-              style={{
-                fontSize: 11,
-                padding: '3px 8px',
-                borderRadius: 3,
-                background: selectedCopernicusLayer === 'true-color' ? 'var(--bg-surface)' : 'transparent',
-                color: selectedCopernicusLayer === 'true-color' ? 'var(--text-primary)' : 'var(--text-muted)',
-                fontWeight: selectedCopernicusLayer === 'true-color' ? 700 : 500,
-                border: 'none',
-                cursor: 'pointer',
-              }}
-              title="Sentinel-2 MSI Optical Natural True Color"
-            >
-              Optical
-            </button>
-            <button
-              className={`base-btn ${selectedCopernicusLayer === 'sar-vv' ? 'active' : ''}`}
-              onClick={() => handleSelectCopernicusLayer('sar-vv')}
-              style={{
-                fontSize: 11,
-                padding: '3px 8px',
-                borderRadius: 3,
-                background: selectedCopernicusLayer === 'sar-vv' ? 'var(--bg-surface)' : 'transparent',
-                color: selectedCopernicusLayer === 'sar-vv' ? 'var(--text-primary)' : 'var(--text-muted)',
-                fontWeight: selectedCopernicusLayer === 'sar-vv' ? 700 : 500,
-                border: 'none',
-                cursor: 'pointer',
-              }}
-              title="Sentinel-1 C-SAR Radar Backscatter (Microwave)"
-            >
-              SAR Radar
-            </button>
-          </div>
         </div>
 
-        {/* CENTER: Operational Layer Toggles */}
+        {/* RIGHT: Tactical Toggles & Actions */}
         <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexShrink: 0 }}>
           {/* AI Analysis Mask Toggle */}
           <button
@@ -451,44 +413,16 @@ export const MapPanel: React.FC<MapPanelProps> = ({
             Borders &amp; EEZ
           </button>
 
-          {/* Spill Satellite Drape Overlay Toggle */}
-          <button
-            className={`btn ${showSpillOverlay ? 'btn-secondary' : 'btn-secondary'}`}
-            onClick={() => setShowSpillOverlay(!showSpillOverlay)}
-            style={{
-              padding: '3px 9px',
-              fontSize: 11,
-              gap: 5,
-              opacity: showSpillOverlay ? 1 : 0.6,
-            }}
-            title="Toggle Calibrated Satellite Spill Drape"
-          >
-            <span className="material-symbols-outlined" style={{ fontSize: 14 }}>layers</span>
-            {showSpillOverlay ? 'Overlay On' : 'Overlay Off'}
-          </button>
+          <span style={{ color: 'var(--border-subtle)', fontSize: 12, margin: '0 2px' }}>|</span>
 
-          {/* Seamarks Toggle */}
-          <button
-            className={`btn ${showSeamarks ? 'btn-secondary' : 'btn-secondary'}`}
-            onClick={() => setShowSeamarks(!showSeamarks)}
-            style={{ padding: '3px 9px', fontSize: 11, gap: 5, opacity: showSeamarks ? 1 : 0.6 }}
-            title="Toggle OpenSeaMap Buoys, Beacons & TSS"
-          >
-            <span className="material-symbols-outlined" style={{ fontSize: 14 }}>anchor</span>
-            Seamarks
-          </button>
-        </div>
-
-        {/* RIGHT: Tools & Actions */}
-        <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexShrink: 0 }}>
           <button
             className="btn btn-secondary"
-            onClick={() => setShowRawImageModal(true)}
-            style={{ padding: '3px 9px', fontSize: 11, gap: 5 }}
-            title="Inspect Full 2048px Raw Satellite Image"
+            onClick={() => setIsCleanupModalOpen(true)}
+            style={{ padding: '3px 9px', fontSize: 11, gap: 5, borderColor: 'rgba(16, 185, 129, 0.4)', background: 'rgba(16, 185, 129, 0.08)' }}
+            title="NOS-DCP Clean-Up Logistics & Resource Allocation Plan"
           >
-            <span className="material-symbols-outlined" style={{ fontSize: 14 }}>fullscreen</span>
-            Full Image
+            <span className="material-symbols-outlined" style={{ fontSize: 14, color: '#10B981' }}>cleaning_services</span>
+            <span style={{ color: '#10B981', fontWeight: 600 }}>Clean-Up</span>
           </button>
 
           <button
@@ -499,6 +433,16 @@ export const MapPanel: React.FC<MapPanelProps> = ({
           >
             <span className="material-symbols-outlined" style={{ fontSize: 14 }}>my_location</span>
             Recenter
+          </button>
+
+          <button
+            className="btn btn-secondary"
+            onClick={() => setShowRawImageModal(true)}
+            style={{ padding: '3px 9px', fontSize: 11, gap: 5 }}
+            title="Inspect Full 2048px Raw Satellite Image"
+          >
+            <span className="material-symbols-outlined" style={{ fontSize: 14 }}>fullscreen</span>
+            Full Image
           </button>
 
           <button
@@ -936,6 +880,7 @@ export const MapPanel: React.FC<MapPanelProps> = ({
           layerOpacity={layerOpacity}
           showAiMask={showAiMask}
           showOverlay={showSpillOverlay}
+          scrubHours={scrubHours}
           detectionResult={detectionResult}
           driftEnvelopes={driftEnvelopes}
           onUpdateCoords={onUpdateCoords}
@@ -975,8 +920,18 @@ export const MapPanel: React.FC<MapPanelProps> = ({
               </div>
 
               <div className="hud-row">
-                <div className="lswatch" style={{ background: '#DC2626', border: '1px dashed #DC2626' }}></div>
-                <span><strong>Suspect AIS Silence</strong>: Gap Segment</span>
+                <div className="lswatch" style={{ background: '#3B82F6' }}></div>
+                <span><strong>AIS Transit Speed</strong>: &gt;10 kn</span>
+              </div>
+
+              <div className="hud-row">
+                <div className="lswatch" style={{ background: '#F59E0B' }}></div>
+                <span><strong>AIS Slow / Maneuver</strong>: 2.5–6 kn</span>
+              </div>
+
+              <div className="hud-row">
+                <div className="lswatch" style={{ background: '#DC2626', border: '1px dashed #FFFFFF' }}></div>
+                <span><strong>AIS Silence Gap</strong>: Transponder Off</span>
               </div>
             </>
           ) : (
@@ -1011,7 +966,7 @@ export const MapPanel: React.FC<MapPanelProps> = ({
         </div>
       </div>
 
-      <TimeScrubber />
+      <TimeScrubber onTimeChange={setScrubHours} />
 
       {/* ── FULL-SCREEN 2048x2048 RAW SATELLITE SPILL IMAGE INSPECTOR MODAL ── */}
       {showRawImageModal && (
@@ -1293,6 +1248,12 @@ export const MapPanel: React.FC<MapPanelProps> = ({
           </div>
         </div>
       )}
+      {/* ICG NOS-DCP CLEAN-UP LOGISTICS & COST OPTIMIZER MODAL */}
+      <CleanupModal
+        isOpen={isCleanupModalOpen}
+        onClose={() => setIsCleanupModalOpen(false)}
+        scenario={scenario}
+      />
     </div>
   );
 };

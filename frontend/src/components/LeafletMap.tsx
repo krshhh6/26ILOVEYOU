@@ -2,7 +2,7 @@ import React, { useEffect, useRef } from 'react';
 import L from 'leaflet';
 import type { Scenario, BaseLayerType, CopernicusLayerId, DetectionResult } from '../types/dashboard';
 import { SCENARIOS } from '../data/scenarios';
-import { computeBackwardDriftGeometry } from '../utils/geoContours';
+import { computeBackwardDriftGeometry, getRealisticAISTrack, sogToColor, interpolateKinematicsAtHour } from '../utils/geoContours';
 import { getScenarioBenchmarkDetections } from '../services/detectionService';
 
 interface LeafletMapProps {
@@ -15,6 +15,7 @@ interface LeafletMapProps {
   layerOpacity?: number;
   showAiMask?: boolean;
   showOverlay?: boolean;
+  scrubHours?: number;
   detectionResult: DetectionResult | null;
   driftEnvelopes?: any;
   onUpdateCoords: (coords: string) => void;
@@ -41,6 +42,7 @@ export const LeafletMap: React.FC<LeafletMapProps> = ({
   layerOpacity = 1.0,
   showAiMask = false,
   showOverlay = true,
+  scrubHours = 0,
   detectionResult,
   driftEnvelopes,
   onUpdateCoords,
@@ -543,9 +545,8 @@ export const LeafletMap: React.FC<LeafletMapProps> = ({
         'INC-006': [[9.76, 75.94], [10.16, 76.22]],
 
         // INC-007: 20.250°N 86.720°E — Paradip (east coast, ocean = EAST, land = WEST)
-        // Odisha coast at ~86.62°E. Center on 86.72 with left edge at 86.62 (just offshore).
-        // Window: 86.62→86.82 (center=86.72, matching scenario exactly, pushed east)
-        'INC-007': [[20.06, 86.62], [20.44, 86.98]],
+        // Calibrated center on 86.720°E so red SAR/NISAR spill drape aligns directly with AI detection centroid
+        'INC-007': [[20.06, 86.54], [20.44, 86.90]],
 
         // INC-008: 8.500°N 73.000°E — Lakshadweep, open ocean, centered symmetric
         'INC-008': [[8.28, 72.76], [8.72, 73.24]],
@@ -978,23 +979,88 @@ export const LeafletMap: React.FC<LeafletMapProps> = ({
       }).bindTooltip('<b>⏩ Predicted Forward Drift Trajectory (T0 → T+24h Forecast)</b><br>CMEMS hydrodynamic current model forecast', { sticky: true, className: 'gis-custom-tooltip' });
       group.addLayer(forwardPathLine);
 
-      // D. CANDIDATE AIS VESSEL TRACK & SILENCE GAP
-      const trackLine = L.polyline(driftGeo.vesselTrack, {
-        color: '#64748B',
-        weight: 2.0,
-        opacity: 0.85,
-      }).bindTooltip(`<b>Candidate Vessel Track</b><br>${scenario.topVessel}`, { sticky: true, className: 'gis-custom-tooltip' });
-      group.addLayer(trackLine);
+      // D. CANDIDATE AIS VESSEL TRACK — REAL MULTI-POINT KINEMATIC PROJECTION
+      const aisTrackPoints = getRealisticAISTrack(
+        scenario.id,
+        driftGeo.originCoord[0],
+        driftGeo.originCoord[1],
+        driftGeo.vesselHeading
+      );
 
-      const gapLine = L.polyline(driftGeo.aisGapTrack, {
-        color: '#DC2626',
-        weight: 3.5,
-        dashArray: '6, 6',
-        opacity: 0.95,
-      }).bindTooltip(`<b>AIS Silence Gap Segment</b><br>${scenario.diagDetails}`, { sticky: true, className: 'gis-custom-tooltip' });
-      group.addLayer(gapLine);
+      // Draw multi-colored speed-heatmap polyline segments between consecutive waypoints
+      for (let i = 0; i < aisTrackPoints.length - 1; i++) {
+        const p1 = aisTrackPoints[i];
+        const p2 = aisTrackPoints[i + 1];
+        // Use the lower SOG or the silent status of either endpoint to color the segment
+        const segmentStatus = (p1.aisStatus === 'silent' || p2.aisStatus === 'silent')
+          ? 'silent'
+          : (p1.aisStatus === 'gap' || p2.aisStatus === 'gap') ? 'gap' : 'active';
+        const minSog = Math.min(p1.sog, p2.sog);
+        const segmentColor = sogToColor(minSog, segmentStatus);
+        const isSilent = segmentStatus === 'silent' || segmentStatus === 'gap';
 
-      const vesselPos = driftGeo.vesselTrack[driftGeo.vesselTrack.length - 1];
+        const segPoly = L.polyline([p1.coord, p2.coord], {
+          color: segmentColor,
+          weight: isSilent ? 3.5 : 2.5,
+          dashArray: isSilent ? '6, 5' : undefined,
+          opacity: 0.92,
+        }).bindTooltip(
+          `<b>AIS Track Segment</b><br>` +
+          `Time: ${p1.timeLabel} → ${p2.timeLabel}<br>` +
+          `Speed: <b>${minSog.toFixed(1)} kn</b> (${minSog >= 10 ? 'Transit' : minSog >= 6 ? 'Maneuver' : 'Slow/Discharge'})<br>` +
+          `Status: <span style="color:${segmentColor};font-weight:700;">${segmentStatus.toUpperCase()}</span>`,
+          { sticky: true, className: 'gis-custom-tooltip' }
+        );
+        group.addLayer(segPoly);
+      }
+
+      // Draw waypoint dots with speed, heading, and time labels
+      aisTrackPoints.forEach((pt, idx) => {
+        const isEpoch = idx === aisTrackPoints.length - 1; // T=0h (current)
+        const isDischarge = pt.timeLabel === 'T−22h' || pt.timeLabel === 'T−18h';
+        const isSilent = pt.aisStatus === 'silent';
+        const isGap = pt.aisStatus === 'gap';
+        const ptColor = sogToColor(pt.sog, pt.aisStatus);
+
+        // Skip adding dot for T=0h (handled by the larger vessel icon below)
+        if (isEpoch) return;
+
+        const dotIcon = L.divIcon({
+          className: 'gis-ais-wp-wrap',
+          html: `
+            <div style="
+              width: ${isDischarge ? '11px' : '7px'};
+              height: ${isDischarge ? '11px' : '7px'};
+              border-radius: 50%;
+              background: ${ptColor};
+              border: 1.5px solid ${isDischarge ? '#FFFFFF' : 'rgba(255,255,255,0.7)'};
+              box-shadow: 0 0 ${isDischarge ? '8px' : '4px'} ${ptColor};
+              transform: translate(-50%, -50%);
+              cursor: pointer;
+            "></div>
+          `,
+          iconSize: [0, 0],
+          iconAnchor: [0, 0],
+        });
+
+        const wpMarker = L.marker(pt.coord, { icon: dotIcon }).bindPopup(`
+          <div class="gis-popup-card" style="min-width: 200px;">
+            <div class="gis-popup-header" style="color: ${ptColor}; border-bottom: 1.5px solid ${ptColor}88;">
+              AIS POSITION · ${pt.timeLabel}
+            </div>
+            <div class="gis-popup-row"><span style="color:#94A3B8;">Vessel:</span> <strong style="color:#F1F5F9;">${scenario.topVessel}</strong></div>
+            <div class="gis-popup-row"><span style="color:#94A3B8;">Coordinates:</span> <strong style="color:#F1F5F9;">${pt.coord[0].toFixed(3)}°N, ${pt.coord[1].toFixed(3)}°E</strong></div>
+            <div class="gis-popup-row"><span style="color:#94A3B8;">Speed (SOG):</span> <strong style="color:${ptColor}; font-weight:700;">${pt.sog.toFixed(1)} kn</strong></div>
+            <div class="gis-popup-row"><span style="color:#94A3B8;">Course (COG):</span> <strong style="color:#38BDF8;">${pt.cog}° (${scenario.diagDetails?.slice(0, 30) || 'Maritime Fairway'})</strong></div>
+            <div class="gis-popup-row"><span style="color:#94A3B8;">AIS Broadcast:</span> <strong style="color:${ptColor};">${isSilent ? '🔴 TRANSPONDER OFF' : isGap ? '⚠️ INTERMITTENT GAP' : '🟢 BROADCASTING'}</strong></div>
+          </div>
+        `);
+        group.addLayer(wpMarker);
+      });
+
+      // Vessel position at SAR detection epoch (T=0h)
+      const lastPoint = aisTrackPoints[aisTrackPoints.length - 1];
+      const vesselPos = lastPoint.coord;
       const vesselIcon = L.divIcon({
         className: 'gis-glass-marker-wrap',
         html: `
@@ -1012,7 +1078,7 @@ export const LeafletMap: React.FC<LeafletMapProps> = ({
                 ${scenario.topVessel}
               </span>
               <span class="gis-capsule-id" style="background: rgba(234, 88, 12, 0.22); border-color: #EA580C; color: #EA580C;">
-                AIS TRACK
+                T=0h · ${lastPoint.sog.toFixed(1)}kn
               </span>
             </div>
           </div>
@@ -1023,16 +1089,96 @@ export const LeafletMap: React.FC<LeafletMapProps> = ({
       group.addLayer(
         L.marker(vesselPos, { icon: vesselIcon }).bindPopup(`
           <div class="gis-popup-card">
-            <div class="gis-popup-header" style="color: #EA580C; border-bottom: 1.5px solid rgba(234, 88, 12, 0.5);">OFFENDING VESSEL CANDIDATE</div>
+            <div class="gis-popup-header" style="color: #EA580C; border-bottom: 1.5px solid rgba(234, 88, 12, 0.5);">OFFENDING VESSEL CANDIDATE (T=0h)</div>
             <div class="gis-popup-row"><span style="color:#94A3B8;">Vessel:</span> <strong style="color:#F1F5F9;">${scenario.topVessel}</strong></div>
-            <div class="gis-popup-row"><span style="color:#94A3B8;">MMSI:</span> <strong style="color:#38BDF8;">419001234 (Crude Oil Tanker)</strong></div>
-            <div class="gis-popup-row"><span style="color:#94A3B8;">AIS Gap:</span> <strong style="color:#EF4444;">4h 35m inside origin envelope</strong></div>
-            <div class="gis-popup-row"><span style="color:#94A3B8;">Attribution Score:</span> <strong style="color:#F59E0B;">S = ${scenario.scores?.[0] || 0.82}</strong></div>
+            <div class="gis-popup-row"><span style="color:#94A3B8;">Current SOG / COG:</span> <strong style="color:#38BDF8;">${lastPoint.sog.toFixed(1)} kn · ${driftGeo.vesselHeading}°</strong></div>
+            <div class="gis-popup-row"><span style="color:#94A3B8;">AIS Telemetry:</span> <strong style="color:#F1F5F9;">${scenario.diagDetails}</strong></div>
+            <div class="gis-popup-row"><span style="color:#94A3B8;">Attribution Score:</span> <strong style="color:#F59E0B;">S = ${scenario.scores?.[0] || 0.82} (Bayesian Match)</strong></div>
           </div>
         `)
       );
 
       // ── 6. TEMPORAL HUD LABELS (DISCHARGE ORIGIN T-22h & PREDICTED DRIFT T+24h) ──
+
+      // Dynamic Temporal Scrubbing Overlays (When scrubber is moved into the past)
+      if (scrubHours < 0) {
+        const scrubbedState = interpolateKinematicsAtHour(
+          aisTrackPoints,
+          driftGeo.originCoord,
+          [centerLat, centerLng],
+          scrubHours
+        );
+
+        // A. Dynamic Vessel Position at T = scrubHours
+        const isDischarge = scrubbedState.isDischargeActive;
+        const vColor = scrubbedState.vesselStatus === 'silent' ? '#DC2626' : isDischarge ? '#EF4444' : '#00E5FF';
+
+        const scrubbedVesselIcon = L.divIcon({
+          className: 'gis-glass-marker-wrap',
+          html: `
+            <div class="gis-glass-marker" style="color: ${vColor}; cursor: pointer; z-index: 1000;">
+              <div class="gis-vessel-wrap" style="position: absolute; top: -13px; left: -13px; width: 26px; height: 26px; transform: rotate(${driftGeo.vesselHeading}deg);">
+                <svg width="26" height="26" viewBox="0 0 18 18">
+                  <polygon points="9,1 16,16 9,12 2,16" fill="${vColor}" stroke="#FFFFFF" stroke-width="2" />
+                </svg>
+              </div>
+              <div class="gis-glass-capsule placement-right" style="border-color: ${vColor}; left: 18px; box-shadow: 0 0 14px ${vColor}88; background: rgba(5,15,30,0.92);">
+                <span class="gis-capsule-pill" style="color: ${vColor}; border-color: ${vColor}; background: ${vColor}22; font-weight: 800;">
+                  T = ${scrubHours}h
+                </span>
+                <span class="gis-capsule-title" style="color: #FFFFFF; font-weight: 700;">
+                  ${scenario.topVessel}
+                </span>
+                <span class="gis-capsule-id" style="background: ${vColor}33; border-color: ${vColor}; color: ${vColor}; font-weight: 800;">
+                  ${scrubbedState.vesselSog.toFixed(1)}kn ${isDischarge ? '· DISCHARGING' : scrubbedState.vesselStatus === 'silent' ? '· AIS OFF' : ''}
+                </span>
+              </div>
+            </div>
+          `,
+          iconSize: [0, 0],
+          iconAnchor: [0, 0],
+        });
+
+        group.addLayer(
+          L.marker(scrubbedState.vesselCoord, { icon: scrubbedVesselIcon, zIndexOffset: 2000 }).bindPopup(`
+            <div class="gis-popup-card">
+              <div class="gis-popup-header" style="color: ${vColor}; border-bottom: 1.5px solid ${vColor}88;">
+                HISTORICAL AIS KINEMATICS · T = ${scrubHours}h
+              </div>
+              <div class="gis-popup-row"><span style="color:#94A3B8;">Vessel:</span> <strong style="color:#F1F5F9;">${scenario.topVessel}</strong></div>
+              <div class="gis-popup-row"><span style="color:#94A3B8;">Coordinates:</span> <strong style="color:#38BDF8;">${scrubbedState.vesselCoord[0].toFixed(4)}°N, ${scrubbedState.vesselCoord[1].toFixed(4)}°E</strong></div>
+              <div class="gis-popup-row"><span style="color:#94A3B8;">Speed Over Ground:</span> <strong style="color:${vColor}; font-weight:700;">${scrubbedState.vesselSog.toFixed(1)} kn</strong></div>
+              <div class="gis-popup-row"><span style="color:#94A3B8;">Broadcast State:</span> <strong style="color:${vColor};">${scrubbedState.vesselStatus.toUpperCase()}</strong></div>
+              <div class="gis-popup-row"><span style="color:#94A3B8;">Operational Status:</span> <strong style="color:#F59E0B;">${isDischarge ? '⚠️ ACTIVE BUNKER/SLOP DISCHARGE IN PROGRESS' : 'Underway Along Marine Fairway'}</strong></div>
+            </div>
+          `)
+        );
+
+        // B. Dynamic Oil Spill Centroid at T = scrubHours
+        const spillColor = isDischarge ? '#EF4444' : '#F59E0B';
+        const scrubbedSpillIcon = L.divIcon({
+          className: 'gis-glass-marker-wrap',
+          html: `
+            <div class="gis-glass-marker" style="color: ${spillColor}; z-index: 900;">
+              <div class="gis-glass-dot" style="background: ${spillColor}; box-shadow: 0 0 16px ${spillColor}; border: 2.5px solid #FFFFFF; width: 14px; height: 14px; border-radius: 50%;"></div>
+              <div class="gis-glass-capsule placement-left" style="border-color: ${spillColor}; right: 18px; box-shadow: 0 0 12px ${spillColor}66; background: rgba(5,15,30,0.92);">
+                <span class="gis-capsule-pill" style="color: ${spillColor}; border-color: ${spillColor}; background: ${spillColor}22; font-weight: 800;">
+                  SLICK T = ${scrubHours}h
+                </span>
+                <span class="gis-capsule-title" style="color: #FFFFFF; font-weight: 700;">
+                  ${isDischarge ? 'Discharge In Progress' : 'Lagrangian Drift Step'}
+                </span>
+              </div>
+            </div>
+          `,
+          iconSize: [0, 0],
+          iconAnchor: [0, 0],
+        });
+
+        group.addLayer(
+          L.marker(scrubbedState.spillCoord, { icon: scrubbedSpillIcon, zIndexOffset: 1500 })
+        );
+      }
 
       // 2. DISCHARGE ORIGIN PIN (T-22h Source)
       const originIcon = L.divIcon({
@@ -1101,7 +1247,7 @@ export const LeafletMap: React.FC<LeafletMapProps> = ({
         `)
       );
     }
-  }, [scenario, selectedCopernicusLayer, layerOpacity, showAiMask, detectionResult]);
+  }, [scenario, selectedCopernicusLayer, layerOpacity, showAiMask, detectionResult, scrubHours]);
 
   return (
     <div
