@@ -162,7 +162,7 @@ export async function runSentinel1Detection(
     model_version: 'unet-s1-sar-sos-v2.4-cdse',
     sensor: 'Sentinel-1A C-SAR IW GRD (VV)',
     scene_timestamp: new Date().toISOString(),
-    scene_id: `S1A_IW_GRDH_1SDV_${new Date().toISOString().replace(/[-:T]/g, '').slice(0, 14)}_056540_06ED90_2B48`,
+    scene_id: `S1A_IW_GRDH_1SDV_${new Date().toISOString().replaceAll('-', '').replaceAll(':', '').replaceAll('T', '').slice(0, 14)}_056540_06ED90_2B48`,
     polarization: 'VV+VH',
   };
 }
