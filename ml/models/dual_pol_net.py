@@ -13,9 +13,6 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
-# Enable package namespace discovery for submodules in ml/models/
-__path__ = [os.path.join(os.path.dirname(os.path.abspath(__file__)), "models")]
-
 
 # ═══════════════════════════════════════════════════════
 # Shared Building Blocks
@@ -271,24 +268,9 @@ def get_segmenter(in_channels: int = 2) -> SpillSegNet:
     return SpillSegNet(in_channels=in_channels)
 
 
+get_model = get_classifier
+
+
 def count_params(model: nn.Module) -> int:
     """Count total trainable parameters."""
     return sum(p.numel() for p in model.parameters() if p.requires_grad)
-
-
-# Quick test
-if __name__ == "__main__":
-    cls_model = get_classifier()
-    seg_model = get_segmenter()
-
-    print(f"Classifier: {count_params(cls_model):,} params")
-    print(f"Segmenter:  {count_params(seg_model):,} params")
-
-    # Test forward pass
-    cls_in = torch.randn(1, 2, 400, 400)
-    cls_out = cls_model(cls_in)
-    print(f"Classifier: {cls_in.shape} -> {cls_out.shape}")
-
-    seg_in = torch.randn(1, 2, 512, 512)
-    seg_out = seg_model(seg_in)
-    print(f"Segmenter:  {seg_in.shape} -> {seg_out.shape}")
