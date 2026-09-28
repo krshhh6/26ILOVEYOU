@@ -3,7 +3,7 @@ from pathlib import Path
 import tifffile
 import numpy as np
 
-tif_path = Path(r"D:\01_Train_Val_Oil_Spill_images\Oil\00000.tif")
+tif_path = Path(r"D:\SIH 26143-Oil_Spill\01_Train_Val_Oil_Spill_images\Oil\00000.tif")
 
 print(f"Reading {tif_path.name} ({tif_path.stat().st_size / 1e6:.1f} MB)...")
 t0 = time.time()

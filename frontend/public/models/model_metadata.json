@@ -1,8 +1,8 @@
 {
   "model_name": "DomainAdversarialUNet-ASPP",
   "model_type": "classifier",
-  "version": "v3_zenodo_gt_dualpol",
-  "exported_at": "2026-09-27T21:31:43Z",
+  "version": "v3_zenodo_gt_dualpol_finetuned",
+  "exported_at": "2026-09-28T15:55:51Z",
   "in_channels": 2,
   "input_shape": [
     1,
@@ -14,7 +14,7 @@
     "VV",
     "VH (or Pseudo-VH)"
   ],
-  "optimal_threshold": 0.35,
+  "optimal_threshold": 0.45,
   "normalization": {
     "vv_min_db": -32.0,
     "vv_max_db": -10.0,
@@ -64,6 +64,7 @@
     "fp": 65,
     "fn": 104
   },
+  "finetune_note": "Fine-tuned on gallery-representative Zenodo scenes",
   "onnx_size_kb": 1261.8896484375,
   "segmenter_version": "v2.0_plan2_dann_aspp",
   "architecture": {

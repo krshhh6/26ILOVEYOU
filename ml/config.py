@@ -18,7 +18,7 @@ import torch
 class ZenodoDataPaths:
     """Paths to all Zenodo dataset components (Parts I, II, III)."""
     # ----- Part I: Oil Spill (Train/Val) -----
-    oil_images_dir: Path = Path(r"D:\01_Train_Val_Oil_Spill_images\Oil")
+    oil_images_dir: Path = Path(r"D:\SIH 26143-Oil_Spill\01_Train_Val_Oil_Spill_images\Oil")
     oil_masks_dir: Path = Path(r"D:\01_Train_Val_Oil_Spill_mask\Mask_oil")
 
     # Fallback paths
@@ -50,7 +50,7 @@ class ZenodoDataPaths:
     test_lookalike_masks_dir: Path = Path(r"D:\Test\Mask\Lookalike")
 
     # Fallback alternative paths (in case of different extraction structure)
-    _alt_oil_images: Path = Path(r"D:\SIH 26143-Oil_Spill\01_Train_Val_Oil_Spill_images\Oil")
+    _alt_oil_images: Path = Path(r"D:\01_Train_Val_Oil_Spill_images\Oil")
 
     def find_oil_images(self) -> Path:
         """Auto-discover oil images directory."""
