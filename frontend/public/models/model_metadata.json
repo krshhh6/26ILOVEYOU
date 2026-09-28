@@ -1,20 +1,20 @@
 {
-  "model_name": "DualPolOilSpillNet",
+  "model_name": "DomainAdversarialUNet-ASPP",
   "model_type": "classifier",
   "version": "v3_zenodo_gt_dualpol",
-  "exported_at": "2026-09-22T16:25:47Z",
+  "exported_at": "2026-09-27T21:31:43Z",
   "in_channels": 2,
   "input_shape": [
     1,
     2,
-    400,
-    400
+    512,
+    512
   ],
   "channel_order": [
     "VV",
-    "VH"
+    "VH (or Pseudo-VH)"
   ],
-  "optimal_threshold": 0.26999999999999996,
+  "optimal_threshold": 0.35,
   "normalization": {
     "vv_min_db": -32.0,
     "vv_max_db": -10.0,
@@ -64,5 +64,21 @@
     "fp": 65,
     "fn": 104
   },
-  "onnx_size_kb": 1261.8896484375
+  "onnx_size_kb": 1261.8896484375,
+  "segmenter_version": "v2.0_plan2_dann_aspp",
+  "architecture": {
+    "type": "DANN-UNet",
+    "bottleneck": "Atrous Spatial Pyramid Pooling (ASPP: 1, 6, 12, 18)",
+    "attention": "CBAM Skip-Connection Gating",
+    "domain_invariance": "Gradient Reversal Layer (4 sensors)",
+    "dual_heads": [
+      "Dense Mask [1, 512, 512]",
+      "Morphological Boundary [1, 512, 512]"
+    ]
+  },
+  "quantization": {
+    "fp32_size_mb": 9.62,
+    "int8_size_mb": 2.52,
+    "simd_webassembly_latency_ms": 739.2
+  }
 }
