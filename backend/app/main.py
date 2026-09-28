@@ -54,6 +54,10 @@ from app.api.v1.ais_router import router as ais_router
 app.include_router(ais_router, prefix=settings.API_V1_STR)
 app.include_router(ais_router, prefix="/api")
 
+from app.api.v1.active_learning_router import router as active_learning_router
+app.include_router(active_learning_router, prefix=f"{settings.API_V1_STR}/active-learning")
+app.include_router(active_learning_router, prefix="/api/active-learning")
+
 
 # Mount Socket.IO for Real-Time Event Broadcasting
 from app.core.socket_server import socket_app
