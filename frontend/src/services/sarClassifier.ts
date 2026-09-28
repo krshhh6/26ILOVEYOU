@@ -1380,10 +1380,10 @@ export async function generateOcclusionMap(
       continue;
     }
     const damping = ambientOceanMean - grayValues[i];
-    // Threshold out background sea noise (damping > 16)
-    if (damping > 16) {
-      // Non-linear power scaling for sharp, exact slick center attribution
-      const score = Math.pow((damping - 16) / Math.max(1, ambientOceanMean - 26), 1.4);
+    // Threshold out background sea noise and mild boundary damping (focus on strong damping > 22)
+    if (damping > 22) {
+      // High non-linear power scaling for sharp, extreme core hotspot attribution
+      const score = Math.pow((damping - 22) / Math.max(1, ambientOceanMean - 32), 1.8);
       rawAttribution[i] = score;
       if (score > maxAttribution) maxAttribution = score;
     }
@@ -1441,7 +1441,8 @@ export async function generateOcclusionMap(
     }
   }
 
-  // Render high-resolution exact thermal attention glow
+  // Render high-resolution exact thermal occlusion sensitivity
+  // ONLY displays the extremely sensitive area (peak sensitivity >= 0.50)
   const heatCanvas = document.createElement('canvas');
   heatCanvas.width = mapDim;
   heatCanvas.height = mapDim;
@@ -1453,35 +1454,29 @@ export async function generateOcclusionMap(
     const normVal = maxSmooth > 0 ? smoothMap[i] / maxSmooth : 0;
     const baseIdx = i * 4;
 
-    if (normVal < 0.12) {
-      outPixels[baseIdx] = 0;
+    // Filter out low and medium peripheral sensitivity; strictly show the extremely sensitive core
+    if (normVal < 0.50) {
+      outPixels[baseIdx]     = 0;
       outPixels[baseIdx + 1] = 0;
       outPixels[baseIdx + 2] = 0;
       outPixels[baseIdx + 3] = 0;
       continue;
     }
 
-    if (normVal < 0.40) {
-      // 0.12 - 0.40: Cyan/Teal to Amber transition
-      const t = (normVal - 0.12) / 0.28;
-      outPixels[baseIdx] = Math.round(240 * t);
-      outPixels[baseIdx + 1] = Math.round(180 * t);
-      outPixels[baseIdx + 2] = Math.round(80 * (1 - t));
-      outPixels[baseIdx + 3] = Math.round(140 * t);
-    } else if (normVal < 0.75) {
-      // 0.40 - 0.75: Amber to Vibrant Red-Orange
-      const t = (normVal - 0.40) / 0.35;
-      outPixels[baseIdx] = 255;
-      outPixels[baseIdx + 1] = Math.round(180 * (1 - t * 0.75));
+    if (normVal < 0.75) {
+      // 0.50 - 0.75: High Sensitivity Transition (Warm Golden Amber to Flame Orange)
+      const t = (normVal - 0.50) / 0.25;
+      outPixels[baseIdx]     = 255;
+      outPixels[baseIdx + 1] = Math.round(195 * (1 - t * 0.65));
       outPixels[baseIdx + 2] = 0;
-      outPixels[baseIdx + 3] = Math.round(150 + 60 * t);
+      outPixels[baseIdx + 3] = Math.round(150 + 65 * t);
     } else {
-      // 0.75 - 1.00: Deep Crimson Core to Luminous Red
+      // 0.75 - 1.00: Extremely Sensitive Epicenter (Peak Crimson / Intense Luminous Red Core)
       const t = (normVal - 0.75) / 0.25;
-      outPixels[baseIdx] = 255;
-      outPixels[baseIdx + 1] = Math.round(45 * (1 - t));
-      outPixels[baseIdx + 2] = Math.round(20 * (1 - t));
-      outPixels[baseIdx + 3] = Math.round(210 + 40 * t);
+      outPixels[baseIdx]     = 255;
+      outPixels[baseIdx + 1] = Math.round(40 * (1 - t));
+      outPixels[baseIdx + 2] = Math.round(15 * (1 - t));
+      outPixels[baseIdx + 3] = Math.round(215 + 40 * t);
     }
   }
 

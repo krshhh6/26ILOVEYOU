@@ -974,9 +974,9 @@ export const DetectionView: React.FC<DetectionViewProps> = ({
                 <div style={{ background: 'var(--bg-raised)', border: '1px solid var(--border-subtle)', borderRadius: 12, padding: 12, display: 'flex', flexDirection: 'column', gap: 8 }}>
                   <div style={{ fontSize: 12, fontWeight: 700, color: 'var(--text-primary)', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
                     <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-                      <span>Attention Map (Exact Sensitivity)</span>
+                      <span>🎯 Occlusion Sensitivity Map</span>
                       <span style={{ fontSize: 10, color: '#10B981', background: 'rgba(16, 185, 129, 0.12)', padding: '1px 6px', borderRadius: 4, fontWeight: 700 }}>
-                        Smooth Thermal ✓
+                        Peak Focus ✓
                       </span>
                     </div>
                     {result.prediction !== 'invalid_sar' && !heatmapUrl && !isGeneratingHeatmap && (
