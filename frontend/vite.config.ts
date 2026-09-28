@@ -51,6 +51,11 @@ function onnxWasmPlugin(): Plugin {
 
 export default defineConfig({
   plugins: [react(), onnxWasmPlugin()],
+  resolve: {
+    alias: {
+      '@': path.resolve(__dirname, './src'),
+    },
+  },
   optimizeDeps: {
     exclude: ['onnxruntime-web'],
   },

@@ -18,6 +18,8 @@ import {
   parseGpsCoordinates,
   type MaritimeSearchResult,
 } from './services/maritimeSearchService';
+import { MobileNav } from './components/MobileNav';
+import { MobileDrawer } from './components/MobileDrawer';
 
 export const App: React.FC = () => {
   const [activeTab, setActiveTab] = useState<TabType>('dashboard');
@@ -37,6 +39,7 @@ export const App: React.FC = () => {
     category?: string;
   } | null>(null);
   const [sarDriftPayload, setSarDriftPayload] = useState<SarDriftPayload | null>(null);
+  const [isMobileDrawerOpen, setIsMobileDrawerOpen] = useState<boolean>(false);
 
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
@@ -186,16 +189,27 @@ export const App: React.FC = () => {
   useEffect(() => {
     const tabs: TabType[] = ['dashboard', 'detection', 'drift', 'attribution', 'evidence', 'analytics'];
     const handleKeyDown = (e: KeyboardEvent) => {
-      if (e.target instanceof HTMLInputElement || e.target instanceof HTMLSelectElement) return;
-
-      const k = parseInt(e.key, 10);
-      if (k >= 1 && k <= 6) {
-        setActiveTab(tabs[k - 1]);
+      if (
+        e.target instanceof HTMLInputElement ||
+        e.target instanceof HTMLSelectElement ||
+        e.target instanceof HTMLTextAreaElement
+      ) {
+        return;
       }
+
+      // Avoid switching tabs via number keys on mobile touch devices
+      if (window.innerWidth >= 1024) {
+        const k = parseInt(e.key, 10);
+        if (k >= 1 && k <= 6) {
+          setActiveTab(tabs[k - 1]);
+        }
+      }
+
       if (e.key === 'Escape') {
         setIsForensicOpen(false);
         setIsSentinelHubOpen(false);
         setIsBhoonidhiOpen(false);
+        setIsMobileDrawerOpen(false);
       }
     };
 
@@ -312,6 +326,27 @@ export const App: React.FC = () => {
         isOpen={isBhoonidhiOpen}
         onClose={() => setIsBhoonidhiOpen(false)}
         scenario={scenario}
+      />
+
+      {/* MOBILE BOTTOM NAVIGATION DOCK (< 1024px) */}
+      <MobileNav
+        activeTab={activeTab}
+        onSelectTab={handleSelectTab}
+        isDrawerOpen={isMobileDrawerOpen}
+        onToggleDrawer={() => setIsMobileDrawerOpen((prev) => !prev)}
+        incidentCount={allIncidents.length}
+      />
+
+      {/* MOBILE SLIDE-UP DRAWER (< 1024px) */}
+      <MobileDrawer
+        isOpen={isMobileDrawerOpen}
+        onClose={() => setIsMobileDrawerOpen(false)}
+        activeTab={activeTab}
+        onSelectTab={handleSelectTab}
+        currentScenarioKey={currentScenarioKey}
+        onSelectScenario={handleSelectScenario}
+        onOpenSettings={() => setIsForensicOpen(true)}
+        incidents={allIncidents}
       />
     </div>
   );

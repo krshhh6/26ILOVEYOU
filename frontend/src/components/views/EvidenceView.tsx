@@ -602,6 +602,7 @@ export const EvidenceView: React.FC<EvidenceViewProps> = ({
                 </div>
 
                 <div
+                  className="evidence-algo-grid"
                   style={{
                     display: 'grid',
                     gridTemplateColumns: 'repeat(3, 1fr)',

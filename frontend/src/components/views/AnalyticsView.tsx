@@ -321,7 +321,7 @@ export const AnalyticsView: React.FC<AnalyticsViewProps> = ({ incidents, onOpenL
           </span>
         </div>
         <div className="panel-body">
-          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: 'var(--sp-3)', marginBottom: 'var(--sp-4)' }}>
+          <div className="analytics-benchmark-grid" style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: 'var(--sp-3)', marginBottom: 'var(--sp-4)' }}>
             <div style={{ padding: 12, background: 'var(--bg-raised)', borderRadius: 6, borderLeft: '3px solid #0284C7' }}>
               <div style={{ fontSize: 11, fontWeight: 600, color: 'var(--text-muted)' }}>DICE / F1-SCORE</div>
               <div className="mono font-bold text-lg" style={{ color: '#0284C7', marginTop: 4 }}>{benchmark.metrics.dice_f1_score}</div>
@@ -344,7 +344,7 @@ export const AnalyticsView: React.FC<AnalyticsViewProps> = ({ incidents, onOpenL
             </div>
           </div>
 
-          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 'var(--sp-3)', background: 'var(--bg-subtle, rgba(0,0,0,0.02))', padding: '12px', borderRadius: 6, fontSize: 12 }}>
+          <div className="analytics-wind-grid" style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 'var(--sp-3)', background: 'var(--bg-subtle, rgba(0,0,0,0.02))', padding: '12px', borderRadius: 6, fontSize: 12 }}>
             <div>
               <div className="font-semibold text-xs text-muted" style={{ marginBottom: 4 }}>OPTIMAL WIND (3–10 m/s)</div>
               <div className="mono font-bold" style={{ color: '#16A34A' }}>{benchmark.environmental_breakdown.optimal_wind_3_to_10_ms.iou_pct}% IoU</div>
@@ -931,7 +931,7 @@ export const AnalyticsView: React.FC<AnalyticsViewProps> = ({ incidents, onOpenL
                     </span>
                   </div>
 
-                  <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: 8, fontSize: 10.5, marginTop: 4 }}>
+                  <div className="analytics-basin-stats-grid" style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: 8, fontSize: 10.5, marginTop: 4 }}>
                     <div style={{ background: 'var(--bg-base)', padding: '6px 8px', borderRadius: 6 }}>
                       <div className="text-muted">Active Slicks</div>
                       <strong style={{ color: '#ef4444' }}>2 Slicks (6.57 km²)</strong>
@@ -975,7 +975,7 @@ export const AnalyticsView: React.FC<AnalyticsViewProps> = ({ incidents, onOpenL
                     </span>
                   </div>
 
-                  <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: 8, fontSize: 10.5, marginTop: 4 }}>
+                  <div className="analytics-basin-stats-grid" style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: 8, fontSize: 10.5, marginTop: 4 }}>
                     <div style={{ background: 'var(--bg-base)', padding: '6px 8px', borderRadius: 6 }}>
                       <div className="text-muted">Active Slicks</div>
                       <strong style={{ color: '#f97316' }}>1 Slick (2.40 km²)</strong>
@@ -1019,7 +1019,7 @@ export const AnalyticsView: React.FC<AnalyticsViewProps> = ({ incidents, onOpenL
                     </span>
                   </div>
 
-                  <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: 8, fontSize: 10.5, marginTop: 4 }}>
+                  <div className="analytics-basin-stats-grid" style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: 8, fontSize: 10.5, marginTop: 4 }}>
                     <div style={{ background: 'var(--bg-base)', padding: '6px 8px', borderRadius: 6 }}>
                       <div className="text-muted">Active Slicks</div>
                       <strong style={{ color: '#0284c7' }}>1 Slick (0.95 km²)</strong>

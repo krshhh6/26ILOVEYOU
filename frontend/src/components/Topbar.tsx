@@ -51,6 +51,7 @@ export const Topbar: React.FC<TopbarProps> = ({
   const [selectedIndex, setSelectedIndex] = useState(-1);
   const [isPromptedForCleanup, setIsPromptedForCleanup] = useState(false);
   const scenarioSelectRef = useRef<HTMLSelectElement>(null);
+  const [isMobileSearchExpanded, setIsMobileSearchExpanded] = useState(false);
   const searchContainerRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
 
@@ -88,6 +89,7 @@ export const Topbar: React.FC<TopbarProps> = ({
     const handleClickOutside = (e: MouseEvent) => {
       if (searchContainerRef.current && !searchContainerRef.current.contains(e.target as Node)) {
         setIsOpen(false);
+        setIsMobileSearchExpanded(false);
       }
     };
     document.addEventListener('mousedown', handleClickOutside);
@@ -96,6 +98,7 @@ export const Topbar: React.FC<TopbarProps> = ({
 
   const handleSelectResult = (result: MaritimeSearchResult) => {
     setIsOpen(false);
+    setIsMobileSearchExpanded(false);
     setSearchInput(result.title);
     if (onSelectSearchResult) {
       onSelectSearchResult(result);
@@ -155,6 +158,7 @@ export const Topbar: React.FC<TopbarProps> = ({
       handleExecuteSearch();
     } else if (e.key === 'Escape') {
       setIsOpen(false);
+      setIsMobileSearchExpanded(false);
       inputRef.current?.blur();
     }
   };
@@ -344,13 +348,20 @@ export const Topbar: React.FC<TopbarProps> = ({
       <div className="topbar-actions">
         {/* Maritime Search */}
         <div
-          className={`search-pill-container ${isOpen && searchInput.trim().length > 0 ? 'active-open' : ''}`}
+          className={`search-pill-container ${isOpen && searchInput.trim().length > 0 ? 'active-open' : ''} ${isMobileSearchExpanded ? 'mobile-search-active' : ''}`}
           ref={searchContainerRef}
         >
           <button
             type="button"
             className="search-pill-icon-btn"
-            onClick={handleExecuteSearch}
+            onClick={() => {
+              if (!isMobileSearchExpanded && window.innerWidth < 640) {
+                setIsMobileSearchExpanded(true);
+                setTimeout(() => inputRef.current?.focus(), 60);
+              } else {
+                handleExecuteSearch();
+              }
+            }}
             title="Search port, strait, vessel, or spill incident"
           >
             <span className="material-symbols-outlined search-pill-icon">

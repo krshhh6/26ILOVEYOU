@@ -352,7 +352,7 @@ export const DetectionView: React.FC<DetectionViewProps> = ({
         </div>
       </div>
 
-      <section style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 20, flexShrink: 0, marginBottom: 20 }}>
+      <section className="detection-split-section" style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 20, flexShrink: 0, marginBottom: 20 }}>
         {/* Upload & Screenshot Ingestion Zone (Stock White Panel) */}
         <div 
           style={{ 
@@ -482,7 +482,7 @@ export const DetectionView: React.FC<DetectionViewProps> = ({
           </div>
 
           {/* 10-Image Symmetric Grid */}
-          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(5, 1fr)', gap: 8 }}>
+          <div className="sample-gallery-grid" style={{ display: 'grid', gridTemplateColumns: 'repeat(5, 1fr)', gap: 8 }}>
             {activeCategoryData.images.map((src, i) => (
               <img 
                 key={`${galleryCategory}-${i}`} 
@@ -765,7 +765,7 @@ export const DetectionView: React.FC<DetectionViewProps> = ({
               : '4 / 3';
 
             return (
-              <div style={{ display: 'grid', gridTemplateColumns: result.segmentationMask ? 'repeat(3, 1fr)' : 'repeat(2, 1fr)', gap: 14, padding: 16, background: 'var(--bg-surface)' }}>
+              <div className="diagnostic-frames-grid" style={{ display: 'grid', gridTemplateColumns: result.segmentationMask ? 'repeat(3, 1fr)' : 'repeat(2, 1fr)', gap: 14, padding: 16, background: 'var(--bg-surface)' }}>
                 {/* Panel 1: Original SAR Image or Cropped ROI */}
                 <div style={{ background: 'var(--bg-raised)', border: '1px solid var(--border-subtle)', borderRadius: 12, padding: 12, display: 'flex', flexDirection: 'column', gap: 8 }}>
                   <div style={{ fontSize: 12, fontWeight: 700, color: 'var(--text-primary)', display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: 4 }}>

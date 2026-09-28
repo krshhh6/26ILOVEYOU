@@ -1277,7 +1277,7 @@ export const AttributionView: React.FC<AttributionViewProps> = ({ currentScenari
                       MMSI: <span className="mono">{v.mmsi}</span> · IMO: <span className="mono">{v.imo}</span> · Flag: {v.flag} · {v.type}
                     </div>
 
-                    <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: 6, fontSize: 10, background: 'var(--bg-raised)', padding: '6px 8px', borderRadius: 6 }}>
+                    <div className="candidate-telemetry-grid" style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: 6, fontSize: 10, background: 'var(--bg-raised)', padding: '6px 8px', borderRadius: 6 }}>
                       <div>
                         <span className="text-muted">CPA: </span>
                         <strong>{v.cpa_nm} nm</strong>
@@ -1298,7 +1298,7 @@ export const AttributionView: React.FC<AttributionViewProps> = ({ currentScenari
 
                     {v.metrics && (
                       <div style={{ display: 'flex', flexDirection: 'column', gap: 6, marginTop: 4 }}>
-                        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: 6, fontSize: 9.5 }}>
+                        <div className="candidate-metrics-grid" style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: 6, fontSize: 9.5 }}>
                           <div>
                             <div style={{ color: 'var(--text-muted)', marginBottom: 2, display: 'flex', justifyContent: 'space-between' }}>
                               <span>Spatial</span>

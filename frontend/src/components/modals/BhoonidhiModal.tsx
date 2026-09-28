@@ -194,7 +194,7 @@ export const BhoonidhiModal: React.FC<BhoonidhiModalProps> = ({
             </div>
 
             {/* Main Portal View: Left Filters Column + Right Results/AOI Column */}
-            <div style={{ display: 'grid', gridTemplateColumns: '280px 1fr', gap: 12 }}>
+            <div className="bhoonidhi-portal-grid" style={{ display: 'grid', gridTemplateColumns: '280px 1fr', gap: 12 }}>
               {/* Left Column: Satellite & Sensor Filter Accordions */}
               <div style={{ background: 'var(--bg-elevated)', border: '1px solid var(--border-color)', borderRadius: 'var(--radius)', padding: 10, display: 'flex', flexDirection: 'column', gap: 8 }}>
                 {/* Resolution */}

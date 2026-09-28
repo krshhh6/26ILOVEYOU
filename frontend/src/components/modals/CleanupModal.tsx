@@ -76,7 +76,7 @@ export const CleanupModal: React.FC<CleanupModalProps> = ({ isOpen, onClose, sce
           </div>
 
           {/* RESPONSE STRATEGY TABS */}
-          <div className="hide-on-print" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', background: 'var(--bg-raised)', padding: '6px 10px', borderRadius: 8, border: '1px solid var(--border-subtle)' }}>
+          <div className="hide-on-print cleanup-strategy-bar" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', background: 'var(--bg-raised)', padding: '6px 10px', borderRadius: 8, border: '1px solid var(--border-subtle)' }}>
             <span style={{ fontSize: 11, fontWeight: 700, color: 'var(--text-secondary)' }}>
               Response Strategy Doctrine:
             </span>
@@ -176,7 +176,7 @@ export const CleanupModal: React.FC<CleanupModalProps> = ({ isOpen, onClose, sce
           </div>
 
           {/* TOP 4 KEY METRIC CARDS */}
-          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: 10 }}>
+          <div className="cleanup-metrics-grid" style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: 10 }}>
             {/* Card 1: Estimated Spill Mass */}
             <div style={{ background: 'var(--bg-raised)', padding: '10px 12px', borderRadius: 6, border: '1px solid var(--border-subtle)' }}>
               <div style={{ fontSize: 10, color: 'var(--text-muted)', textTransform: 'uppercase', fontWeight: 600 }}>Spill Mass / Volume</div>

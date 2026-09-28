@@ -1355,7 +1355,7 @@ export const DriftView: React.FC<DriftViewProps> = ({
                     </span>
                   </div>
 
-                  <div style={{ display: 'grid', gridTemplateColumns: 'repeat(5, 1fr)', gap: 8 }}>
+                  <div className="drift-timestep-grid" style={{ display: 'grid', gridTemplateColumns: 'repeat(5, 1fr)', gap: 8 }}>
                     {activeForecasts.map((f, idx) => {
                       const isSelected = selectedStepIndex === idx;
                       const threatBg = f.threatLevel === 'CRITICAL' ? '#ef4444' : f.threatLevel === 'HIGH' ? '#f97316' : f.threatLevel === 'MODERATE' ? '#f59e0b' : '#10b981';
@@ -1396,7 +1396,7 @@ export const DriftView: React.FC<DriftViewProps> = ({
                 </div>
 
                 {/* CRITICAL FUTURE SUMMARY METRICS */}
-                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 10 }}>
+                <div className="drift-metrics-tri-grid" style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 10 }}>
                   <div
                     style={{
                       background: 'var(--bg-raised)',
@@ -1587,7 +1587,7 @@ export const DriftView: React.FC<DriftViewProps> = ({
                     <div title="Persistent Surface Slick" style={{ width: `${currentForecast.remainingSurfacePct}%`, background: '#ef4444', transition: 'width 0.3s ease' }} />
                   </div>
 
-                  <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: 8, fontSize: 10.5 }}>
+                  <div className="drift-weathering-grid" style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: 8, fontSize: 10.5 }}>
                     <div style={{ background: 'var(--bg-surface)', padding: '6px 10px', borderRadius: 6, border: '1px solid var(--border-subtle)', display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 6 }}>
                       <div style={{ display: 'flex', alignItems: 'center', gap: 6, minWidth: 0 }}>
                         <span style={{ width: 8, height: 8, borderRadius: 2, background: '#38bdf8', flexShrink: 0 }} />

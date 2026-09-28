@@ -93,36 +93,38 @@ export const ForensicModal: React.FC<ForensicModalProps> = ({ isOpen, onClose, s
               <span className="material-symbols-outlined" style={{ fontSize: 16, color: 'var(--accent)' }}>directions_boat</span>
               Primary Suspect Vessel Attribution Record
             </div>
-            <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 11.5, border: '1px solid var(--border-subtle)' }}>
-              <thead>
-                <tr style={{ background: 'var(--bg-raised)', textAlign: 'left', color: 'var(--text-secondary)' }}>
-                  <th style={{ padding: '6px 8px', border: '1px solid var(--border-subtle)' }}>Rank</th>
-                  <th style={{ padding: '6px 8px', border: '1px solid var(--border-subtle)' }}>Vessel Name</th>
-                  <th style={{ padding: '6px 8px', border: '1px solid var(--border-subtle)' }}>MMSI / IMO</th>
-                  <th style={{ padding: '6px 8px', border: '1px solid var(--border-subtle)' }}>Flag / Registry</th>
-                  <th style={{ padding: '6px 8px', border: '1px solid var(--border-subtle)' }}>Attribution Score</th>
-                  <th style={{ padding: '6px 8px', border: '1px solid var(--border-subtle)' }}>Correlated Anomaly</th>
-                </tr>
-              </thead>
-              <tbody>
-                <tr>
-                  <td style={{ padding: '6px 8px', border: '1px solid var(--border-subtle)', fontWeight: 700, color: 'var(--accent)' }}>#1 PRIMARY</td>
-                  <td style={{ padding: '6px 8px', border: '1px solid var(--border-subtle)', fontWeight: 700 }}>
-                    {scenario.topVessel}
-                  </td>
-                  <td style={{ padding: '6px 8px', border: '1px solid var(--border-subtle)', fontFamily: 'JetBrains Mono, monospace' }}>
-                    419001234 / 9412345
-                  </td>
-                  <td style={{ padding: '6px 8px', border: '1px solid var(--border-subtle)' }}>Liberia · Crude Oil Tanker</td>
-                  <td style={{ padding: '6px 8px', border: '1px solid var(--border-subtle)', fontFamily: 'JetBrains Mono, monospace', fontWeight: 800, color: '#ef4444' }}>
-                    0.86 / 1.00
-                  </td>
-                  <td style={{ padding: '6px 8px', border: '1px solid var(--border-subtle)', color: 'var(--text-secondary)', fontSize: 10.5 }}>
-                    {scenario.diagDetails || 'Intentional AIS silence gap (4.2 hrs) crossing Lagrangian origin contour'}
-                  </td>
-                </tr>
-              </tbody>
-            </table>
+            <div style={{ overflowX: 'auto', WebkitOverflowScrolling: 'touch' }}>
+              <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 11.5, border: '1px solid var(--border-subtle)', minWidth: 540 }}>
+                <thead>
+                  <tr style={{ background: 'var(--bg-raised)', textAlign: 'left', color: 'var(--text-secondary)' }}>
+                    <th style={{ padding: '6px 8px', border: '1px solid var(--border-subtle)' }}>Rank</th>
+                    <th style={{ padding: '6px 8px', border: '1px solid var(--border-subtle)' }}>Vessel Name</th>
+                    <th style={{ padding: '6px 8px', border: '1px solid var(--border-subtle)' }}>MMSI / IMO</th>
+                    <th style={{ padding: '6px 8px', border: '1px solid var(--border-subtle)' }}>Flag / Registry</th>
+                    <th style={{ padding: '6px 8px', border: '1px solid var(--border-subtle)' }}>Attribution Score</th>
+                    <th style={{ padding: '6px 8px', border: '1px solid var(--border-subtle)' }}>Correlated Anomaly</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  <tr>
+                    <td style={{ padding: '6px 8px', border: '1px solid var(--border-subtle)', fontWeight: 700, color: 'var(--accent)' }}>#1 PRIMARY</td>
+                    <td style={{ padding: '6px 8px', border: '1px solid var(--border-subtle)', fontWeight: 700 }}>
+                      {scenario.topVessel}
+                    </td>
+                    <td style={{ padding: '6px 8px', border: '1px solid var(--border-subtle)', fontFamily: 'JetBrains Mono, monospace' }}>
+                      419001234 / 9412345
+                    </td>
+                    <td style={{ padding: '6px 8px', border: '1px solid var(--border-subtle)' }}>Liberia · Crude Oil Tanker</td>
+                    <td style={{ padding: '6px 8px', border: '1px solid var(--border-subtle)', fontFamily: 'JetBrains Mono, monospace', fontWeight: 800, color: '#ef4444' }}>
+                      0.86 / 1.00
+                    </td>
+                    <td style={{ padding: '6px 8px', border: '1px solid var(--border-subtle)', color: 'var(--text-secondary)', fontSize: 10.5 }}>
+                      {scenario.diagDetails || 'Intentional AIS silence gap (4.2 hrs) crossing Lagrangian origin contour'}
+                    </td>
+                  </tr>
+                </tbody>
+              </table>
+            </div>
           </div>
 
           {/* STATUTORY SECTION 63 BSA 2023 CERTIFICATE */}
