@@ -282,25 +282,48 @@ export function validateSarImage(data: Uint8ClampedArray, width: number, height:
   const {
     meanBrightness, brightRatio, coloredRatio, avgColorDiff, isColor,
     flatRatio, speckleRatio, histEntropy, distinctLevels,
-    hardEdgeRatio, softEdgeRatio, maxModeRatio, maxModeVal, grayValues
+    maxModeRatio, maxModeVal
   } = features;
 
   // ============================================================
-  // REJECTION 1: Completely blank / solid uniform canvas
-  // e.g. MS Paint white background, blank shape fill
+  // REJECTION 1: Optical Color Photography or Colored Software UI
+  // Real SAR ocean radar is single-channel/dual-pol microwave backscatter (0% color).
   // ============================================================
-  if (flatRatio > 0.94) {
+  if (coloredRatio > 0.15 && avgColorDiff > 12.0) {
     return {
       isValid: false,
-      reason: `Blank / Uniform Graphic — lacks physical radar backscatter texture (${(flatRatio * 100).toFixed(0)}% flat synthetic fill)`,
+      reason: `Optical Color / UI Graphics Detected — ${(coloredRatio * 100).toFixed(0)}% colored pixels (avg chroma ${avgColorDiff.toFixed(1)}). SAR is microwave radar, not visible-light color photography.`,
+      metrics: { meanBrightness, brightRatio, sharpTransitions: flatRatio, isColor: true }
+    };
+  }
+
+  // ============================================================
+  // REJECTION 2: Non-marine High-Luminance UI / Document / Web Browser Screenshot
+  // Real SAR sea mean is 70–130 DN; bright pixels (>190 DN) are rare point targets (<32%, avg 2.8%).
+  // ============================================================
+  if ((brightRatio > 0.40 && meanBrightness > 165) || meanBrightness > 185 || brightRatio > 0.55) {
+    return {
+      isValid: false,
+      reason: `Document / UI Screenshot — non-marine high-luminance scene (mean lum ${meanBrightness.toFixed(0)}, ${(brightRatio * 100).toFixed(0)}% bright pixels). Real SAR sea returns are dark to medium-gray microwave backscatter.`,
       metrics: { meanBrightness, brightRatio, sharpTransitions: flatRatio, isColor }
     };
   }
 
   // ============================================================
-  // REJECTION 2: Single solid background color dominating frame
+  // REJECTION 3: Blank / Solid Uniform Graphic (Paint canvas, blank shape)
   // ============================================================
-  if (maxModeRatio > 0.90 && maxModeVal !== 0) {
+  if (flatRatio > 0.60 && speckleRatio < 0.02) {
+    return {
+      isValid: false,
+      reason: `Synthetic / Paint Graphic — lacks physical radar speckle noise (${(flatRatio * 100).toFixed(0)}% flat fill, ${(speckleRatio * 100).toFixed(1)}% speckle). Real SAR exhibits Rayleigh speckle across sea surfaces.`,
+      metrics: { meanBrightness, brightRatio, sharpTransitions: flatRatio, isColor }
+    };
+  }
+
+  // ============================================================
+  // REJECTION 4: Dominant single flat color
+  // ============================================================
+  if (maxModeRatio > 0.75 && maxModeVal > 0) {
     return {
       isValid: false,
       reason: `Single Solid Color Canvas — ${(maxModeRatio * 100).toFixed(0)}% of image is one flat value (not radar backscatter)`,
@@ -309,154 +332,26 @@ export function validateSarImage(data: Uint8ClampedArray, width: number, height:
   }
 
   // ============================================================
-  // REJECTION 3: Paint / Digital Art / Synthetic Image Detection
-  //
-  // Key signatures that distinguish paint from real SAR:
-  //  • Very low histogram entropy (few distinct intensity levels)
-  //  • Very few distinct gray levels used overall
-  //  • Hard crisp geometric edges dominate (hardEdgeRatio >> softEdgeRatio)
-  //  • Essentially no Rayleigh speckle noise (speckleRatio ≈ 0)
-  //  • High flat-block ratio (most regions perfectly uniform)
-  //
-  // Inspired by: d-elicio/Oil-Spill-Detection-in-SAR-images local
-  // adaptive thresholding and superpixel texture statistics.
+  // REJECTION 5: Low entropy / low distinct levels (Paint drawings / vector art)
   // ============================================================
-
-  // Count how many paint signals are triggered
-  let paintScore = 0;
-  const paintSignals: string[] = [];
-
-  // NOTE: JPEG-compressed images legitimately have fewer distinct gray levels
-  // than raw SAR GeoTIFFs. These thresholds are calibrated to catch MS Paint
-  // drawings (typically <15 distinct values) while passing JPEG SAR (typically >40).
-
-  if (histEntropy < 2.8) {
-    paintScore += 3; // Very strong signal — nearly monochrome
-    paintSignals.push(`extremely low histogram entropy (${histEntropy.toFixed(2)} bits, SAR typically >5.0)`);
-  } else if (histEntropy < 3.5) {
-    paintScore += 2;
-    paintSignals.push(`low histogram entropy (${histEntropy.toFixed(2)} bits)`);
-  }
-
-  if (distinctLevels < 12) {
-    paintScore += 3; // Very strong signal — almost certainly paint/synthetic
-    paintSignals.push(`only ${distinctLevels} distinct intensity values (SAR JPEG typically >50)`);
-  } else if (distinctLevels < 25) {
-    paintScore += 1;
-    paintSignals.push(`${distinctLevels} distinct intensity values`);
-  }
-
-  // Hard crisp edges with almost NO soft texture = geometric paint shapes
-  // Must have very high hard-edge ratio AND very low soft (diffuse speckle) ratio
-  if (hardEdgeRatio > 0.10 && softEdgeRatio < 0.04 && flatRatio > 0.70) {
-    paintScore += 3;
-    paintSignals.push(`geometric paint edges (${(hardEdgeRatio * 100).toFixed(1)}% hard, ${(softEdgeRatio * 100).toFixed(1)}% soft)`);
-  }
-
-  // Extremely smooth — virtually zero speckle AND massive flat regions
-  // Real SAR always has some Rayleigh speckle
-  if (speckleRatio < 0.01 && flatRatio > 0.85) {
-    paintScore += 3;
-    paintSignals.push(`no Rayleigh speckle noise (${(speckleRatio * 100).toFixed(1)}% speckle blocks, ${(flatRatio * 100).toFixed(0)}% flat)`);
-  }
-
-  // Only reject if VERY strong convergent evidence (score >= 5, needs multiple strong signals)
-  if (paintScore >= 5) {
+  if (distinctLevels < 25 && flatRatio > 0.40) {
     return {
       isValid: false,
-      reason: `Invalid SAR Input — Synthetic / Paint Image Detected: ${paintSignals.slice(0, 2).join('; ')}. Real SAR radar has Rayleigh-distributed multiplicative speckle noise across all ocean pixels.`,
+      reason: `Synthetic Drawing / Vector Art — only ${distinctLevels} distinct intensity levels (real SAR has continuous backscatter distribution >60 levels)`,
+      metrics: { meanBrightness, brightRatio, sharpTransitions: flatRatio, isColor }
+    };
+  }
+
+  if (histEntropy < 3.2 && flatRatio > 0.40) {
+    return {
+      isValid: false,
+      reason: `Synthetic Graphic — low Shannon entropy (${histEntropy.toFixed(2)} bits, real SAR typically >5.0 bits)`,
       metrics: { meanBrightness, brightRatio, sharpTransitions: flatRatio, isColor }
     };
   }
 
   // ============================================================
-  // REJECTION 3b: Grainy Paint / Hand-Drawn Image Detection
-  //
-  // Paint images can have added noise/grain that fools speckle checks above.
-  // Key distinguishing feature: paint brush strokes create unnaturally
-  // thick, dense, connected dark regions with sharp intensity boundaries
-  // against the background. Real SAR oil has gradual damping transitions.
-  //
-  // We check: dark pixel clustering density — paint has very high local
-  // dark-pixel concentration in thick strokes; SAR oil has diffuse thin filaments.
-  // ============================================================
-  {
-    // Count dark pixels (< 40% of mean) and check how tightly clustered they are
-    const darkThresh = Math.max(25, meanBrightness * 0.40);
-    let darkPixels = 0;
-    let darkNeighborPairs = 0; // count of dark pixels with 4+ dark 3x3 neighbors
-    const w = width;
-    const h = height;
-    const totalPx = width * height;
-
-    // First pass: mark dark pixels
-    const isDark = new Uint8Array(totalPx);
-    for (let i = 0; i < totalPx; i++) {
-      if (grayValues[i] < darkThresh && grayValues[i] > 3) {
-        isDark[i] = 1;
-        darkPixels++;
-      }
-    }
-
-    // Second pass: count heavily-clustered dark pixels (paint strokes are thick)
-    if (darkPixels > 0) {
-      for (let y = 1; y < h - 1; y++) {
-        for (let x = 1; x < w - 1; x++) {
-          const idx = y * w + x;
-          if (!isDark[idx]) continue;
-          let dn = 0;
-          for (let dy = -1; dy <= 1; dy++) {
-            for (let dx = -1; dx <= 1; dx++) {
-              if (dy === 0 && dx === 0) continue;
-              if (isDark[(y + dy) * w + (x + dx)]) dn++;
-            }
-          }
-          if (dn >= 5) darkNeighborPairs++; // Thick brush stroke: 5+ of 8 neighbors are dark
-        }
-      }
-
-      const darkRatio = darkPixels / totalPx;
-      const clusterDensity = darkPixels > 0 ? darkNeighborPairs / darkPixels : 0;
-
-      // Paint strokes: high dark ratio (5-40%) with very dense clustering (> 60%)
-      // AND the remaining bright area has low speckle (< 3% high-var blocks)
-      // Real SAR: dark oil has lower clustering, surrounding ocean has visible speckle
-      if (darkRatio >= 0.04 && darkRatio <= 0.45 && clusterDensity > 0.55 && speckleRatio < 0.03) {
-        return {
-          isValid: false,
-          reason: `Hand-Drawn / Paint Image — thick dark strokes detected (${(darkRatio * 100).toFixed(0)}% dark pixels, ${(clusterDensity * 100).toFixed(0)}% cluster density). SAR oil filaments are diffuse, not dense brush strokes.`,
-          metrics: { meanBrightness, brightRatio, sharpTransitions: flatRatio, isColor }
-        };
-      }
-    }
-  }
-
-  // ============================================================
-  // REJECTION 4: Vivid high-saturation optical photograph
-  // Note: SAR tool screenshots with colored UI are accepted.
-  // Only heavily saturated non-radar scenes rejected.
-  // ============================================================
-  if (coloredRatio > 0.65 && avgColorDiff > 45) {
-    return {
-      isValid: false,
-      reason: `Optical Color Photography — high-saturation scene (${(coloredRatio * 100).toFixed(0)}% color pixels). SAR is microwave backscatter, not visible-light photography.`,
-      metrics: { meanBrightness, brightRatio, sharpTransitions: flatRatio, isColor }
-    };
-  }
-
-  // ============================================================
-  // REJECTION 5: Printed document / blank white page
-  // ============================================================
-  if (brightRatio > 0.85 && meanBrightness > 225) {
-    return {
-      isValid: false,
-      reason: 'Blank Document / White Sheet — non-marine high-luminance scene',
-      metrics: { meanBrightness, brightRatio, sharpTransitions: flatRatio, isColor }
-    };
-  }
-
-  // ============================================================
-  // REJECTION 6: Empty black frame / pure dark void
+  // REJECTION 6: Pure dark void
   // ============================================================
   if (meanBrightness < 4) {
     return {
@@ -890,27 +785,6 @@ export function createCompatibleCanvas(
     appliedCrop = { x: sx, y: sy, width: size, height: size };
     wasCenterCropped = true;
     ctx.drawImage(source, sx, sy, size, size, 0, 0, targetWidth, targetHeight);
-  }
-
-  // Ensure canvas pixels are calibrated radar-compatible grayscale luminance:
-  // converts any colored web PNGs, false-color layers, or UI screenshot graphics
-  const imgData = ctx.getImageData(0, 0, targetWidth, targetHeight);
-  const px = imgData.data;
-  let hasChroma = false;
-  for (let i = 0; i < px.length; i += 4) {
-    if (Math.abs(px[i] - px[i + 1]) > 8 || Math.abs(px[i] - px[i + 2]) > 8 || Math.abs(px[i + 1] - px[i + 2]) > 8) {
-      hasChroma = true;
-      break;
-    }
-  }
-  if (hasChroma) {
-    for (let i = 0; i < px.length; i += 4) {
-      const lum = Math.round(0.299 * px[i] + 0.587 * px[i + 1] + 0.114 * px[i + 2]);
-      px[i] = lum;
-      px[i + 1] = lum;
-      px[i + 2] = lum;
-    }
-    ctx.putImageData(imgData, 0, 0);
   }
 
   return { canvas, appliedCrop, wasCenterCropped, originalWidth: srcW, originalHeight: srcH };
