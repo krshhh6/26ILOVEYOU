@@ -5,6 +5,8 @@ import { SCENARIOS } from '../../data/scenarios';
 interface AttributionViewProps {
   currentScenario?: Scenario | null;
   onSelectScenario?: (key: string) => void;
+  onSelectTab?: (tab: any) => void;
+  onInspectVesselOnMap?: (vessel: { name: string; lat: number; lng: number; mmsi: string }) => void;
 }
 
 interface CandidateVesselItem {
@@ -430,7 +432,12 @@ const DEFAULT_SCENARIO_VESSELS: Record<string, CandidateVesselItem[]> = {
   ],
 };
 
-export const AttributionView: React.FC<AttributionViewProps> = ({ currentScenario, onSelectScenario }) => {
+export const AttributionView: React.FC<AttributionViewProps> = ({
+  currentScenario,
+  onSelectScenario,
+  onSelectTab,
+  onInspectVesselOnMap,
+}) => {
   const defaultKey = currentScenario?.id.includes('002')
     ? 'INC-002'
     : currentScenario?.id.includes('003')
@@ -505,39 +512,47 @@ export const AttributionView: React.FC<AttributionViewProps> = ({ currentScenari
 
   type WeightKey = 'dist' | 'time' | 'gap' | 'type';
 
-  const handleWeightChange = (changedKey: WeightKey, newValue: number) => {
-    const oldWeights: Record<WeightKey, number> = {
-      dist: weights.dist,
-      time: weights.time,
-      gap: weights.gap,
-      type: weights.type,
+  const [autoBalance, setAutoBalance] = useState<boolean>(true);
+  const [isCalibrationCollapsed, setIsCalibrationCollapsed] = useState<boolean>(false);
+
+  const handleWeightChange = (changedKey: WeightKey, rawValue: number) => {
+    const clampedVal = Math.max(0.0, Math.min(1.0, +(rawValue.toFixed(2))));
+
+    if (!autoBalance) {
+      setWeights((prev) => ({
+        ...prev,
+        [changedKey]: clampedVal,
+      }));
+      return;
+    }
+
+    const oldWeights = { ...weights };
+    const remainingBudget = Math.max(0, +( (1.0 - clampedVal).toFixed(2) ));
+    const otherKeys = (['dist', 'time', 'gap', 'type'] as WeightKey[]).filter((k) => k !== changedKey);
+    const sumOthers = otherKeys.reduce((acc, k) => acc + (oldWeights[k] || 0), 0);
+
+    const newWeights: Record<WeightKey, number> = {
+      ...oldWeights,
+      [changedKey]: clampedVal,
     };
-    const diff = newValue - oldWeights[changedKey];
-    
-    let otherKeys: WeightKey[] = (['dist', 'time', 'gap', 'type'] as WeightKey[]).filter(k => k !== changedKey);
-    let sumOthers = 0;
-    otherKeys.forEach(k => { sumOthers += oldWeights[k]; });
-    
-    const newWeights: Record<WeightKey, number> = { ...oldWeights, [changedKey]: newValue };
-    
-    if (sumOthers > 0) {
-      otherKeys.forEach(k => {
-        let adjustment = diff * (oldWeights[k] / sumOthers);
-        newWeights[k] = Math.max(0, oldWeights[k] - adjustment);
+
+    if (sumOthers > 0.001) {
+      otherKeys.forEach((k) => {
+        newWeights[k] = +((oldWeights[k] / sumOthers) * remainingBudget).toFixed(2);
       });
     } else {
-      otherKeys.forEach(k => {
-        newWeights[k] = Math.max(0, -diff / 3);
+      otherKeys.forEach((k) => {
+        newWeights[k] = +(remainingBudget / otherKeys.length).toFixed(2);
       });
     }
-    
-    let total = Object.values(newWeights).reduce((a, b) => a + b, 0);
-    if (total > 0 && Math.abs(total - 1.0) > 0.001) {
-      (['dist', 'time', 'gap', 'type'] as WeightKey[]).forEach(k => {
-        newWeights[k] /= total;
-      });
+
+    // Fix floating point precision so sum is strictly 1.00
+    const currentSum = Object.values(newWeights).reduce((a, b) => a + b, 0);
+    const delta = +( (1.0 - currentSum).toFixed(2) );
+    if (Math.abs(delta) > 0.001 && otherKeys.length > 0) {
+      newWeights[otherKeys[0]] = Math.max(0, +( (newWeights[otherKeys[0]] + delta).toFixed(2) ));
     }
-    
+
     setWeights(newWeights);
   };
 
@@ -546,6 +561,16 @@ export const AttributionView: React.FC<AttributionViewProps> = ({ currentScenari
     return localStorage.getItem('AISHUB_USERNAME') || '';
   });
 
+  const [expandedMap, setExpandedMap] = useState<Record<string, boolean>>({});
+
+  const toggleExpand = (mmsi: string, currentExpanded: boolean) => {
+    setExpandedMap((prev) => ({
+      ...prev,
+      [mmsi]: !currentExpanded,
+    }));
+  };
+  const [showLegalDetails, setShowLegalDetails] = useState<boolean>(false);
+  const [showFeedConfig, setShowFeedConfig] = useState<boolean>(false);
   const [isLoading, setIsLoading] = useState<boolean>(false);
   const [feedSource, setFeedSource] = useState<string>('AISStream.io WebSocket');
   const [lastUpdated, setLastUpdated] = useState<string>('Live Calibrated Feed');
@@ -745,6 +770,16 @@ export const AttributionView: React.FC<AttributionViewProps> = ({ currentScenari
       .sort((a, b) => b.attribution_score - a.attribution_score);
   }, [incidentId, weights, streamTelemetry, activeScenario]);
 
+  const criticalCount = useMemo(
+    () => candidates.filter((c) => c.risk === 'CRITICAL' || c.attribution_score >= 0.75).length,
+    [candidates]
+  );
+  const highRiskCount = useMemo(
+    () => candidates.filter((c) => c.risk === 'HIGH' || (c.attribution_score >= 0.5 && c.attribution_score < 0.75)).length,
+    [candidates]
+  );
+
+
   const handleRecalculate = () => {
     fetchLiveAIS();
   };
@@ -766,7 +801,7 @@ export const AttributionView: React.FC<AttributionViewProps> = ({ currentScenari
         <div>
           <h1 className="workspace-main-title">Vessel Attribution &amp; AIS Sensitivity Tuner</h1>
           <p className="workspace-sub-title">
-            Spatiotemporal Intersection Between AISHub Live Trajectories &amp; OpenDrift Reverse Origin Envelopes
+            Suspect Attribution · Correlating AIS Vessel Tracks with Reverse Oil Drift Origin
           </p>
         </div>
 
@@ -795,10 +830,22 @@ export const AttributionView: React.FC<AttributionViewProps> = ({ currentScenari
             ))}
           </select>
 
+          {isCustomPreset && (
+            <button
+              className="action-pill-btn secondary"
+              onClick={() => setWeights({ dist: 0.30, time: 0.25, gap: 0.25, type: 0.20 })}
+              title="Reset sensitivity weights to Balanced ML preset"
+            >
+              <span className="material-symbols-outlined" style={{ fontSize: 16 }}>restart_alt</span>
+              <span>Reset Matrix</span>
+            </button>
+          )}
+
           <button
-            className="action-pill-btn secondary"
+            className="action-pill-btn primary"
             onClick={handleRecalculate}
             disabled={isLoading}
+            title="Poll live Indian EEZ transponder data and recalculate rankings"
           >
             <span
               className="material-symbols-outlined"
@@ -809,16 +856,7 @@ export const AttributionView: React.FC<AttributionViewProps> = ({ currentScenari
             >
               sync
             </span>
-            <span>{isLoading ? 'Polling AIS...' : 'Refresh Live AIS'}</span>
-          </button>
-
-          <button
-            className="action-pill-btn primary"
-            onClick={handleRecalculate}
-            title="Recalculate attribution ranking based on current sensitivity matrix"
-          >
-            <span className="material-symbols-outlined" style={{ fontSize: 16 }}>calculate</span>
-            <span>Recalculate Ranking</span>
+            <span>{isLoading ? 'Syncing...' : 'Sync Live AIS & Rerank'}</span>
           </button>
         </div>
       </div>
@@ -827,7 +865,7 @@ export const AttributionView: React.FC<AttributionViewProps> = ({ currentScenari
       <div className="executive-metrics-grid">
         <div className="metric-card-neumorphic">
           <div className="metric-card-header">
-            <span className="metric-card-label">Screened Vessels</span>
+            <span className="metric-card-label">Screened Targets</span>
           </div>
           <div className="metric-card-body">
             <span className="metric-number">
@@ -838,62 +876,62 @@ export const AttributionView: React.FC<AttributionViewProps> = ({ currentScenari
             </span>
           </div>
           <div className="metric-card-footer">
-            <span>AOI: {activeScenario.title.toUpperCase()}</span>
+            <span>{criticalCount} Critical · {highRiskCount} Moderate Suspicion</span>
             <span className="material-symbols-outlined arrow-icon">radar</span>
           </div>
         </div>
 
         <div className="metric-card-neumorphic">
           <div className="metric-card-header">
-            <span className="metric-card-label">Prime Culprit Suspect</span>
+            <span className="metric-card-label">Primary Suspect Attribution</span>
           </div>
           <div className="metric-card-body">
-            <span className="metric-number" style={{ fontSize: 18, color: '#ef4444' }}>
+            <span className="metric-number" style={{ fontSize: 17, color: '#ef4444' }}>
               {candidates[0]?.name || 'CRUDE ATLAS'}
             </span>
             <span className="metric-trend-pill positive" style={{ color: '#ef4444' }}>
-              {candidates[0]?.risk || 'CRITICAL'} RISK
+              {(candidates[0]?.attribution_score ?? 0.88).toFixed(2)} Score
             </span>
           </div>
           <div className="metric-card-footer">
             <span>MMSI: {candidates[0]?.mmsi || '419001234'} · Flag: {candidates[0]?.flag || 'India'}</span>
-            <span className="material-symbols-outlined arrow-icon">directions_boat</span>
+            <span className="material-symbols-outlined arrow-icon">crisis_alert</span>
           </div>
         </div>
 
         <div className="metric-card-neumorphic">
           <div className="metric-card-header">
-            <span className="metric-card-label">Closest CPA Distance</span>
+            <span className="metric-card-label">Surveillance AOI Envelope</span>
           </div>
           <div className="metric-card-body">
             <span className="metric-number">
-              {candidates[0]?.cpa_nm ?? 1.2} <span className="metric-unit">nm</span>
+              35 <span className="metric-unit">nm Radius</span>
             </span>
             <span className="metric-trend-pill positive">
-              Centroid Intersect
+              Reverse Kinematics
             </span>
           </div>
           <div className="metric-card-footer">
-            <span>SOG: {candidates[0]?.sog ?? 4.1} kn ({candidates[0]?.sog && candidates[0].sog < 5 ? 'Discharge' : 'Transit'})</span>
-            <span className="material-symbols-outlined arrow-icon">near_me</span>
+            <span>AOI: {activeScenario.title.toUpperCase()}</span>
+            <span className="material-symbols-outlined arrow-icon">track_changes</span>
           </div>
         </div>
 
         <div className="metric-card-neumorphic">
           <div className="metric-card-header">
-            <span className="metric-card-label">AIS Transponder Silence</span>
+            <span className="metric-card-label">AIS Surveillance Feed</span>
           </div>
           <div className="metric-card-body">
-            <span className="metric-number" style={{ color: (candidates[0]?.ais_gap_hours ?? 0) > 2 ? '#f59e0b' : 'inherit' }}>
-              {candidates[0]?.ais_gap_hours ?? 4.58} <span className="metric-unit">hrs</span>
+            <span className="metric-number" style={{ color: streamTelemetry?.status === 'ONLINE' ? '#10b981' : 'inherit' }}>
+              AISStream <span className="metric-unit">{streamTelemetry?.status === 'ONLINE' ? 'Live' : 'Standby'}</span>
             </span>
-            <span className="metric-trend-pill neutral" style={{ color: (candidates[0]?.ais_gap_hours ?? 0) > 2 ? '#f59e0b' : undefined }}>
-              {(candidates[0]?.ais_gap_hours ?? 0) > 2 ? 'Dark Gap Flagged' : 'Continuous'}
+            <span className="metric-trend-pill neutral" style={{ color: streamTelemetry?.status === 'ONLINE' ? '#10b981' : undefined }}>
+              {streamTelemetry?.status === 'ONLINE' ? 'Active EEZ Sync' : 'Simulated Feed'}
             </span>
           </div>
           <div className="metric-card-footer">
-            <span>Temporal Blackout Correlation</span>
-            <span className="material-symbols-outlined arrow-icon">visibility_off</span>
+            <span>{candidates.length} Target Tracks Correlated · Indian EEZ</span>
+            <span className="material-symbols-outlined arrow-icon">satellite_alt</span>
           </div>
         </div>
       </div>
@@ -901,92 +939,205 @@ export const AttributionView: React.FC<AttributionViewProps> = ({ currentScenari
       {/* 3. WORKFLOW NAV BAR */}
       <div className="workflow-nav-bar">
         <div className="workflow-title-area">
-          <h2 className="workflow-title">Sensitivity Presets &amp; AIS Stream Control</h2>
-          <span className="scenario-chip" style={{ borderColor: 'rgba(56, 189, 248, 0.4)', color: 'var(--accent)' }}>
-            {feedSource.split('(')[0].trim()}
+          <h2 className="workflow-title">Sensitivity Presets</h2>
+          <span
+            className="scenario-chip"
+            style={{
+              borderColor: streamTelemetry?.status === 'ONLINE' ? 'rgba(16, 185, 129, 0.4)' : 'rgba(56, 189, 248, 0.4)',
+              color: streamTelemetry?.status === 'ONLINE' ? '#10b981' : 'var(--accent)',
+            }}
+            title={`Active Telemetry Feed: ${feedSource}`}
+          >
+            <span
+              className="status-dot dot-live"
+              style={{
+                width: 6,
+                height: 6,
+                background: streamTelemetry?.status === 'ONLINE' ? '#10b981' : 'var(--accent)',
+              }}
+            />
+            {streamTelemetry?.status === 'ONLINE' ? (feedSource.includes('AISStream') ? 'AISStream Live EEZ' : 'AISHub Relay') : 'AIS Standby'}
           </span>
         </div>
 
         <div className="workflow-tabs-strip">
           <button
+            type="button"
             className={`workflow-tab-btn ${weights.dist === 0.30 && weights.time === 0.25 && weights.gap === 0.25 && weights.type === 0.20 ? 'active' : ''}`}
             onClick={() => setWeights({ dist: 0.30, time: 0.25, gap: 0.25, type: 0.20 })}
+            title="Balanced ML Attribution (Distance 30%, Timing 25%, Blackout Gap 25%, Cargo Risk 20%)"
           >
-            Balanced ML (30/25/25/20)
+            Balanced (30/25/25/20)
           </button>
           <button
+            type="button"
             className={`workflow-tab-btn ${weights.dist === 0.20 && weights.time === 0.15 && weights.gap === 0.45 && weights.type === 0.20 ? 'active' : ''}`}
             onClick={() => setWeights({ dist: 0.20, time: 0.15, gap: 0.45, type: 0.20 })}
+            title="Focus on Dark Ships with long AIS blackout gaps (45% Gap Weight)"
           >
-            Dark Ship Blackout Focus
+            Dark Ship Focus
           </button>
           <button
+            type="button"
             className={`workflow-tab-btn ${weights.dist === 0.50 && weights.time === 0.20 && weights.gap === 0.10 && weights.type === 0.20 ? 'active' : ''}`}
             onClick={() => setWeights({ dist: 0.50, time: 0.20, gap: 0.10, type: 0.20 })}
+            title="Focus on Anchorage Proximity to spill drift origin (50% Distance Weight)"
           >
-            Anchorage Proximity Focus
+            Anchorage Focus
           </button>
           {isCustomPreset && (
             <button
+              type="button"
               className="workflow-tab-btn active"
-              style={{ borderColor: 'var(--accent)', color: 'var(--accent)', display: 'flex', alignItems: 'center', gap: 6 }}
-              title="Custom Sensitivity Matrix Active"
+              style={{ borderColor: 'var(--accent)', color: 'var(--accent)' }}
+              title="Custom Sensitivity Matrix Active: Click to reset to Balanced ML preset"
+              onClick={() => setWeights({ dist: 0.30, time: 0.25, gap: 0.25, type: 0.20 })}
             >
               <span>✦ Custom ({(weights.dist * 100).toFixed(0)}/{(weights.time * 100).toFixed(0)}/{(weights.gap * 100).toFixed(0)}/{(weights.type * 100).toFixed(0)})</span>
-              <span
-                style={{ cursor: 'pointer', fontSize: 11, opacity: 0.8, textDecoration: 'underline' }}
-                onClick={(e) => {
-                  e.stopPropagation();
-                  setWeights({ dist: 0.30, time: 0.25, gap: 0.25, type: 0.20 });
-                }}
-                title="Reset to Balanced Preset"
-              >
-                (Reset)
-              </span>
+              <span style={{ fontSize: 10, opacity: 0.75, textDecoration: 'underline', marginLeft: 2 }}>Reset</span>
             </button>
           )}
         </div>
 
-        <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-          <input
-            type="text"
-            placeholder="AISHub Username..."
-            value={aishubUsername}
-            onChange={(e) => handleSaveUsername(e.target.value)}
-            style={{
-              fontSize: 11,
-              padding: '4px 10px',
-              borderRadius: 20,
-              border: '1px solid var(--border-subtle)',
-              background: 'var(--bg-raised)',
-              color: 'var(--text-primary)',
-              width: 140,
-              outline: 'none',
-            }}
-          />
+        <div className="workflow-nav-actions">
+          <div style={{ position: 'relative' }}>
+            <button
+              type="button"
+              className={`action-pill-btn ${showFeedConfig ? 'primary' : 'secondary'}`}
+              style={{ padding: '5px 11px', fontSize: 11, display: 'inline-flex', alignItems: 'center', gap: 5, whiteSpace: 'nowrap' }}
+              onClick={() => setShowFeedConfig((prev) => !prev)}
+              title="Configure AIS Stream Feed credentials and endpoints"
+            >
+              <span className="material-symbols-outlined" style={{ fontSize: 15 }}>settings_input_antenna</span>
+              <span>AIS Feed Config</span>
+            </button>
+
+            {showFeedConfig && (
+              <div
+                style={{
+                  position: 'absolute',
+                  top: '125%',
+                  right: 0,
+                  width: 280,
+                  background: 'var(--bg-surface, #1e293b)',
+                  border: '1px solid var(--border-default, rgba(255,255,255,0.15))',
+                  borderRadius: 10,
+                  boxShadow: '0 10px 25px rgba(0,0,0,0.4)',
+                  padding: '12px 14px',
+                  zIndex: 100,
+                  display: 'flex',
+                  flexDirection: 'column',
+                  gap: 8,
+                }}
+              >
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', borderBottom: '1px solid var(--border-subtle)', paddingBottom: 6 }}>
+                  <span style={{ fontSize: 11, fontWeight: 700, color: 'var(--text-primary)' }}>AIS Stream Provider</span>
+                  <span className="status-dot dot-live" style={{ width: 7, height: 7 }} />
+                </div>
+
+                <div>
+                  <label style={{ fontSize: 10, color: 'var(--text-muted)', display: 'block', marginBottom: 4 }}>
+                    AISHub Account Username (Optional API Relay)
+                  </label>
+                  <div style={{ display: 'flex', gap: 6 }}>
+                    <input
+                      type="text"
+                      placeholder="Enter AISHub Username..."
+                      value={aishubUsername}
+                      onChange={(e) => handleSaveUsername(e.target.value)}
+                      style={{
+                        fontSize: 11,
+                        padding: '5px 8px',
+                        borderRadius: 6,
+                        border: '1px solid var(--border-subtle)',
+                        background: 'var(--bg-raised)',
+                        color: 'var(--text-primary)',
+                        flex: 1,
+                        outline: 'none',
+                      }}
+                    />
+                    <button
+                      type="button"
+                      className="action-pill-btn secondary"
+                      style={{ padding: '4px 8px', fontSize: 10 }}
+                      onClick={() => setShowFeedConfig(false)}
+                    >
+                      Done
+                    </button>
+                  </div>
+                </div>
+
+                <div style={{ fontSize: 9.5, color: 'var(--text-secondary)', lineHeight: 1.3 }}>
+                  Primary: <strong>AISStream.io WebSocket</strong> (Indian Ocean EEZ). Fallback: <strong>AISHub API</strong>.
+                </div>
+              </div>
+            )}
+          </div>
+
+          <button
+            type="button"
+            className={`action-pill-btn ${isCalibrationCollapsed ? 'primary' : 'secondary'}`}
+            style={{ padding: '5px 11px', fontSize: 11, display: 'inline-flex', alignItems: 'center', gap: 5, whiteSpace: 'nowrap' }}
+            onClick={() => setIsCalibrationCollapsed((prev) => !prev)}
+            title={isCalibrationCollapsed ? 'Show sensitivity calibration pane' : 'Collapse calibration sliders to maximize suspect vessels list'}
+          >
+            <span className="material-symbols-outlined" style={{ fontSize: 15 }}>
+              {isCalibrationCollapsed ? 'tune' : 'fullscreen'}
+            </span>
+            <span>{isCalibrationCollapsed ? 'Show Sliders' : 'Focus Suspects'}</span>
+          </button>
         </div>
       </div>
 
       {/* 4. ROUNDED CANVAS CONTAINER */}
       <div className="canvas-rounded-container">
-        <div className="canvas-two-column">
+        <div className="canvas-two-column" style={isCalibrationCollapsed ? { gridTemplateColumns: '1fr' } : undefined}>
           {/* LEFT PANE: SENSITIVITY WEIGHT TUNERS & ML PRIORS */}
-          <div className="canvas-pane">
-            <div className="pane-header">
-              <span className="pane-title">
-                <span className="material-symbols-outlined" style={{ fontSize: 18, color: 'var(--accent)' }}>tune</span>
-                Attribution Sensitivity Weights
-              </span>
-              <span className="metric-trend-pill positive" style={{ fontSize: 10, fontWeight: 700 }}>
-                Σ wi = {totalW.toFixed(2)} · Live Model Applied
-              </span>
-            </div>
+          {!isCalibrationCollapsed && (
+            <div className="canvas-pane">
+              <div className="pane-header">
+                <span className="pane-title">
+                  <span className="material-symbols-outlined" style={{ fontSize: 18, color: 'var(--accent)' }}>tune</span>
+                  Attribution Calibration Matrix
+                </span>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                  <button
+                    type="button"
+                    className={`metric-trend-pill ${autoBalance ? 'positive' : 'neutral'}`}
+                    style={{
+                      fontSize: 10,
+                      fontWeight: 700,
+                      cursor: 'pointer',
+                      border: 'none',
+                      display: 'flex',
+                      alignItems: 'center',
+                      gap: 4,
+                    }}
+                    onClick={() => setAutoBalance((prev) => !prev)}
+                    title="When Auto-Balance is ON, adjusting one slider automatically scales remaining weights to sum cleanly to 1.00"
+                  >
+                    <span className="material-symbols-outlined" style={{ fontSize: 12 }}>balance</span>
+                    <span>Auto-Balance: {autoBalance ? 'ON' : 'OFF'}</span>
+                  </button>
+                  <span className="metric-trend-pill positive" style={{ fontSize: 10, fontWeight: 700 }}>
+                    Σ wi = {totalW.toFixed(2)}
+                  </span>
+                  <button
+                    type="button"
+                    style={{ background: 'none', border: 'none', cursor: 'pointer', padding: 2, display: 'flex', color: 'var(--text-muted)' }}
+                    title="Collapse Calibration Sliders"
+                    onClick={() => setIsCalibrationCollapsed(true)}
+                  >
+                    <span className="material-symbols-outlined" style={{ fontSize: 16 }}>close</span>
+                  </button>
+                </div>
+              </div>
 
             <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
-              {/* Slider 1: Spatial Proximity */}
+              {/* Slider 1: Proximity to Slick Origin */}
               <div>
                 <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', fontSize: 11, fontWeight: 700, marginBottom: 6 }}>
-                  <span style={{ color: 'var(--text-primary)' }}>Spatial Proximity (w_dist)</span>
+                  <span style={{ color: 'var(--text-primary)' }}>Proximity to Slick Origin (Spatial)</span>
                   <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
                     <span style={{ fontSize: 10, color: 'var(--text-muted)' }}>({normDist}%)</span>
                     <span className="mono" style={{ color: 'var(--accent)', minWidth: 32, textAlign: 'right' }}>{weights.dist.toFixed(2)}</span>
@@ -1005,14 +1156,14 @@ export const AttributionView: React.FC<AttributionViewProps> = ({ currentScenari
                   onChange={(e) => handleWeightChange('dist', parseFloat(e.target.value))}
                 />
                 <div style={{ fontSize: 10, color: 'var(--text-muted)', marginTop: 4 }}>
-                  Inverse CPA penalty: distance to reverse OpenDrift centroid.
+                  Distance match relative to reverse-drift slick origin.
                 </div>
               </div>
 
-              {/* Slider 2: Temporal Alignment */}
+              {/* Slider 2: Discharge Window Timing */}
               <div>
                 <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', fontSize: 11, fontWeight: 700, marginBottom: 6 }}>
-                  <span style={{ color: 'var(--text-primary)' }}>Temporal Alignment (w_time)</span>
+                  <span style={{ color: 'var(--text-primary)' }}>Discharge Window Timing (Temporal)</span>
                   <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
                     <span style={{ fontSize: 10, color: 'var(--text-muted)' }}>({normTime}%)</span>
                     <span className="mono" style={{ color: 'var(--accent)', minWidth: 32, textAlign: 'right' }}>{weights.time.toFixed(2)}</span>
@@ -1031,14 +1182,14 @@ export const AttributionView: React.FC<AttributionViewProps> = ({ currentScenari
                   onChange={(e) => handleWeightChange('time', parseFloat(e.target.value))}
                 />
                 <div style={{ fontSize: 10, color: 'var(--text-muted)', marginTop: 4 }}>
-                  Time delta relative to OpenDrift reverse discharge window.
+                  Temporal correlation within the estimated discharge window.
                 </div>
               </div>
 
-              {/* Slider 3: AIS Silence Gap */}
+              {/* Slider 3: Transponder Blackout Severity */}
               <div>
                 <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', fontSize: 11, fontWeight: 700, marginBottom: 6 }}>
-                  <span style={{ color: 'var(--text-primary)' }}>AIS Silence Gap (w_gap)</span>
+                  <span style={{ color: 'var(--text-primary)' }}>Transponder Blackout Severity (Dark Gap)</span>
                   <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
                     <span style={{ fontSize: 10, color: 'var(--text-muted)' }}>({normGap}%)</span>
                     <span className="mono" style={{ color: '#f59e0b', minWidth: 32, textAlign: 'right' }}>{weights.gap.toFixed(2)}</span>
@@ -1057,14 +1208,14 @@ export const AttributionView: React.FC<AttributionViewProps> = ({ currentScenari
                   onChange={(e) => handleWeightChange('gap', parseFloat(e.target.value))}
                 />
                 <div style={{ fontSize: 10, color: 'var(--text-muted)', marginTop: 4 }}>
-                  Flag deliberate transponder shutdowns during transit through AOI.
+                  Flags deliberate AIS shutdowns or transponder gaps inside AOI.
                 </div>
               </div>
 
-              {/* Slider 4: Vessel Type Risk Prior */}
+              {/* Slider 4: Cargo Hazard Risk Profile */}
               <div>
                 <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', fontSize: 11, fontWeight: 700, marginBottom: 6 }}>
-                  <span style={{ color: 'var(--text-primary)' }}>Vessel Type Risk Prior (w_type)</span>
+                  <span style={{ color: 'var(--text-primary)' }}>Cargo Hazard Risk Profile (Vessel Prior)</span>
                   <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
                     <span style={{ fontSize: 10, color: 'var(--text-muted)' }}>({normType}%)</span>
                     <span className="mono" style={{ color: '#8b5cf6', minWidth: 32, textAlign: 'right' }}>{weights.type.toFixed(2)}</span>
@@ -1083,7 +1234,7 @@ export const AttributionView: React.FC<AttributionViewProps> = ({ currentScenari
                   onChange={(e) => handleWeightChange('type', parseFloat(e.target.value))}
                 />
                 <div style={{ fontSize: 10, color: 'var(--text-muted)', marginTop: 4 }}>
-                  Cargo hazard prior: VLCC &gt; Aframax &gt; Chemical Tanker &gt; Cargo.
+                  Pollution hazard prior: VLCC &gt; Aframax &gt; Chemical Tanker &gt; Cargo.
                 </div>
               </div>
             </div>
@@ -1128,19 +1279,41 @@ export const AttributionView: React.FC<AttributionViewProps> = ({ currentScenari
               style={{
                 background: 'rgba(37, 99, 235, 0.06)',
                 borderLeft: '4px solid var(--accent)',
-                padding: '12px 14px',
-                borderRadius: 10,
+                padding: '10px 12px',
+                borderRadius: 8,
                 fontSize: 11,
                 color: 'var(--text-secondary)',
-                lineHeight: 1.5,
+                lineHeight: 1.4,
+                marginTop: 10,
               }}
             >
-              <div style={{ fontWeight: 700, color: 'var(--text-primary)', marginBottom: 4, display: 'flex', alignItems: 'center', gap: 6 }}>
-                <span className="material-symbols-outlined" style={{ fontSize: 16, color: 'var(--accent)' }}>gavel</span>
-                Legal Admissibility Framework
+              <div
+                style={{
+                  fontWeight: 700,
+                  color: 'var(--text-primary)',
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'space-between',
+                  cursor: 'pointer',
+                }}
+                onClick={() => setShowLegalDetails((prev) => !prev)}
+              >
+                <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                  <span className="material-symbols-outlined" style={{ fontSize: 16, color: 'var(--accent)' }}>gavel</span>
+                  <span>Legal Admissibility Framework</span>
+                </div>
+                <span style={{ fontSize: 10, color: 'var(--accent)', textDecoration: 'underline' }}>
+                  {showLegalDetails ? 'Hide' : 'Details'}
+                </span>
               </div>
-              Under <strong>MARPOL 73/78 Annex I</strong> and <strong>Section 356 of the Merchant Shipping Act 1958</strong>,
-              spatiotemporal correlation between satellite SAR masks and AIS telemetry provides prima-facie evidence for Indian Coast Guard enforcement actions.
+              <div style={{ marginTop: 4 }}>
+                Under <strong>MARPOL 73/78 Annex I</strong>, kinematic correlation establishes prima-facie evidence for ICG action.
+              </div>
+              {showLegalDetails && (
+                <div style={{ marginTop: 6, paddingTop: 6, borderTop: '1px dashed var(--border-subtle)', fontSize: 10.5, color: 'var(--text-muted)' }}>
+                  Complies with Section 356 of Merchant Shipping Act 1958. Spatiotemporal intersection of AIS trajectories with reverse OpenDrift envelopes qualifies for Indian Coast Guard detention warrants.
+                </div>
+              )}
             </div>
 
             {/* DYNAMIC DRIFT PHYSICS CORRELATION TEST */}
@@ -1148,26 +1321,26 @@ export const AttributionView: React.FC<AttributionViewProps> = ({ currentScenari
               style={{
                 background: 'var(--bg-raised, rgba(255,255,255,0.02))',
                 border: '1px solid var(--border-color, rgba(255,255,255,0.08))',
-                padding: '12px 14px',
-                borderRadius: 10,
-                marginTop: 12,
+                padding: '10px 12px',
+                borderRadius: 8,
+                marginTop: 10,
               }}
             >
-              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8 }}>
-                <div style={{ fontWeight: 700, fontSize: 12, color: 'var(--text-primary)', display: 'flex', alignItems: 'center', gap: 6 }}>
-                  <span className="material-symbols-outlined" style={{ fontSize: 16, color: '#38bdf8' }}>science</span>
-                  Hydrodynamic Drift &amp; AIS Verification
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 6 }}>
+                <div style={{ fontWeight: 700, fontSize: 11.5, color: 'var(--text-primary)', display: 'flex', alignItems: 'center', gap: 6 }}>
+                  <span className="material-symbols-outlined" style={{ fontSize: 15, color: '#38bdf8' }}>science</span>
+                  <span>Hydrodynamic Drift &amp; AIS Verification</span>
                 </div>
                 <button
                   className="action-pill-btn primary"
                   onClick={runPhysicsEngine}
                   disabled={loading}
-                  style={{ padding: '3px 10px', fontSize: 11 }}
+                  style={{ padding: '2px 8px', fontSize: 10 }}
                 >
-                  {loading ? 'Evaluating Drift...' : 'Run Physics Engine'}
+                  {loading ? 'Evaluating...' : 'Run Physics Engine'}
                 </button>
               </div>
-              <p style={{ fontSize: 11, color: 'var(--text-muted)', margin: 0 }}>
+              <p style={{ fontSize: 10.5, color: 'var(--text-muted)', margin: 0 }}>
                 Correlates SAR envelope centroid with reverse AIS kinematic trajectory.
               </p>
 
@@ -1185,6 +1358,7 @@ export const AttributionView: React.FC<AttributionViewProps> = ({ currentScenari
               )}
             </div>
           </div>
+        )}
 
           {/* RIGHT PANE: RANKED CANDIDATE VESSELS */}
           <div className="canvas-pane">
@@ -1198,18 +1372,46 @@ export const AttributionView: React.FC<AttributionViewProps> = ({ currentScenari
               </span>
             </div>
 
+            {/* When calibration pane is collapsed, show active weights banner */}
+            {isCalibrationCollapsed && (
+              <div
+                style={{
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'space-between',
+                  padding: '7px 12px',
+                  background: 'rgba(37, 99, 235, 0.08)',
+                  borderRadius: 8,
+                  marginBottom: 10,
+                  border: '1px solid rgba(56, 189, 248, 0.3)',
+                  fontSize: 11,
+                }}
+              >
+                <div style={{ display: 'flex', alignItems: 'center', gap: 6, color: 'var(--accent)' }}>
+                  <span className="material-symbols-outlined" style={{ fontSize: 15 }}>tune</span>
+                  <span>Active Calibration: <strong>{normDist}% Spatial · {normTime}% Temporal · {normGap}% Dark Gap · {normType}% Cargo Prior</strong> (Σ=1.00)</span>
+                </div>
+                <button
+                  type="button"
+                  className="action-pill-btn secondary"
+                  style={{ padding: '2px 8px', fontSize: 10 }}
+                  onClick={() => setIsCalibrationCollapsed(false)}
+                >
+                  Adjust Sliders
+                </button>
+              </div>
+            )}
+
             {/* AISStream Live Surveillance Status Banner */}
             <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '8px 12px', background: 'var(--bg-raised)', borderRadius: 8, marginBottom: 12, border: '1px solid var(--border-subtle)', flexWrap: 'wrap', gap: 8 }}>
               <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
                 <span className={`status-dot ${streamTelemetry?.status === 'ONLINE' ? 'dot-live' : 'dot-ready'}`} style={{ width: 8, height: 8 }} />
                 <span style={{ fontSize: 11, fontWeight: 700, color: streamTelemetry?.status === 'ONLINE' ? '#10B981' : 'var(--text-muted)' }}>
-                  {streamTelemetry?.status === 'ONLINE' ? 'AISStream Indian EEZ Feed: Active' : 'AIS Feed Standby'}
+                  {streamTelemetry?.status === 'ONLINE' ? 'AISStream Indian EEZ Feed: Active' : 'Calibrated AIS Surveillance: Active'}
                 </span>
-                {streamTelemetry?.total_live_vessels_tracked !== undefined && (
-                  <span style={{ fontSize: 10, background: 'rgba(16, 185, 129, 0.15)', color: '#10B981', padding: '1px 8px', borderRadius: 12, fontWeight: 700 }}>
-                    {streamTelemetry.total_live_vessels_tracked} Commercial Polluters Monitored
-                  </span>
-                )}
+                <span style={{ fontSize: 10, background: 'rgba(16, 185, 129, 0.15)', color: '#10B981', padding: '1px 8px', borderRadius: 12, fontWeight: 700 }}>
+                  {candidates.length} Target Vessels in Zone ({criticalCount} Flagged)
+                </span>
               </div>
 
               <div style={{ fontSize: 11, color: 'var(--text-muted)', display: 'flex', alignItems: 'center', gap: 4 }}>
@@ -1218,16 +1420,25 @@ export const AttributionView: React.FC<AttributionViewProps> = ({ currentScenari
               </div>
             </div>
 
-            <div style={{ display: 'flex', flexDirection: 'column', gap: 10, overflowY: 'auto' }}>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
               {candidates.map((v, idx) => {
                 const riskClass = v.risk.toLowerCase();
                 const scoreColor = v.attribution_score >= 0.75 ? '#ef4444' : v.attribution_score >= 0.5 ? '#f59e0b' : '#10b981';
+                const isExpanded = expandedMap[v.mmsi] !== undefined ? expandedMap[v.mmsi] : idx === 0;
 
                 return (
                   <div
                     key={`${v.mmsi}-${idx}`}
                     className={`vessel-candidate-card ${riskClass}`}
+                    style={{
+                      cursor: 'pointer',
+                      transition: 'all 0.2s ease',
+                      border: isExpanded ? '1px solid var(--accent)' : '1px solid var(--border-subtle)',
+                      padding: isExpanded ? '12px 14px' : '8px 12px',
+                    }}
+                    onClick={() => toggleExpand(v.mmsi, isExpanded)}
                   >
+                    {/* Header Row */}
                     <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
                       <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
                         <div
@@ -1247,105 +1458,191 @@ export const AttributionView: React.FC<AttributionViewProps> = ({ currentScenari
                           {idx + 1}
                         </div>
                         <div>
-                          <span style={{ fontSize: 13, fontWeight: 700, color: idx === 0 ? '#ef4444' : 'var(--text-primary)' }}>
-                            {v.name}
-                          </span>
+                          <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                            <span style={{ fontSize: 13, fontWeight: 700, color: idx === 0 ? '#ef4444' : 'var(--text-primary)' }}>
+                              {v.name}
+                            </span>
+                            <span
+                              className="metric-trend-pill"
+                              style={{
+                                fontSize: 9,
+                                padding: '1px 6px',
+                                background: v.risk === 'CRITICAL' ? 'rgba(239, 68, 68, 0.12)' : v.risk === 'HIGH' ? 'rgba(249, 115, 22, 0.12)' : 'rgba(56, 189, 248, 0.12)',
+                                color: v.risk === 'CRITICAL' ? '#ef4444' : v.risk === 'HIGH' ? '#f97316' : '#38bdf8',
+                              }}
+                            >
+                              {v.risk} SUSPICION
+                            </span>
+                          </div>
+
+                          {/* Collapsed summary preview */}
+                          {!isExpanded && (
+                            <div style={{ fontSize: 10, color: 'var(--text-muted)', marginTop: 2, display: 'flex', gap: 8 }}>
+                              <span>CPA: <strong>{v.cpa_nm} nm</strong></span>
+                              <span>•</span>
+                              <span>SOG: <strong>{v.sog} kn</strong></span>
+                              <span>•</span>
+                              <span>Gap: <strong style={{ color: (v.ais_gap_hours || 0) > 2 ? '#f59e0b' : 'inherit' }}>{v.ais_gap_hours || 0}h</strong></span>
+                            </div>
+                          )}
+                        </div>
+                      </div>
+
+                      <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
+                        <div style={{ textAlign: 'right' }}>
+                          <div style={{ fontSize: 18, fontWeight: 800, color: scoreColor, fontFamily: 'monospace' }}>
+                            {v.attribution_score.toFixed(2)}
+                          </div>
+                          <div style={{ fontSize: 9, color: 'var(--text-muted)' }}>Attribution Score</div>
+                        </div>
+
+                        <button
+                          type="button"
+                          style={{
+                            background: 'none',
+                            border: 'none',
+                            padding: 4,
+                            cursor: 'pointer',
+                            display: 'flex',
+                            alignItems: 'center',
+                            justifyContent: 'center',
+                            color: 'var(--text-muted)',
+                          }}
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            toggleExpand(v.mmsi, isExpanded);
+                          }}
+                          title={isExpanded ? 'Collapse candidate details' : 'Expand candidate details'}
+                        >
                           <span
-                            className="metric-trend-pill"
+                            className="material-symbols-outlined"
                             style={{
-                              marginLeft: 8,
-                              fontSize: 9,
-                              padding: '1px 6px',
-                              background: v.risk === 'CRITICAL' ? 'rgba(239, 68, 68, 0.12)' : v.risk === 'HIGH' ? 'rgba(249, 115, 22, 0.12)' : 'rgba(56, 189, 248, 0.12)',
-                              color: v.risk === 'CRITICAL' ? '#ef4444' : v.risk === 'HIGH' ? '#f97316' : '#38bdf8',
+                              fontSize: 20,
+                              transform: isExpanded ? 'rotate(180deg)' : 'none',
+                              transition: 'transform 0.2s',
                             }}
                           >
-                            {v.risk} SUSPICION
+                            expand_more
                           </span>
-                        </div>
-                      </div>
-
-                      <div style={{ textAlign: 'right' }}>
-                        <div style={{ fontSize: 18, fontWeight: 800, color: scoreColor, fontFamily: 'monospace' }}>
-                          {v.attribution_score.toFixed(2)}
-                        </div>
-                        <div style={{ fontSize: 9, color: 'var(--text-muted)' }}>Attribution Score</div>
+                        </button>
                       </div>
                     </div>
 
-                    <div style={{ fontSize: 10.5, color: 'var(--text-secondary)' }}>
-                      MMSI: <span className="mono">{v.mmsi}</span> · IMO: <span className="mono">{v.imo}</span> · Flag: {v.flag} · {v.type}
-                    </div>
+                    {/* Expanded Details */}
+                    {isExpanded && (
+                      <div
+                        style={{ display: 'flex', flexDirection: 'column', gap: 8, marginTop: 6 }}
+                        onClick={(e) => e.stopPropagation()}
+                      >
+                        <div style={{ fontSize: 10.5, color: 'var(--text-secondary)' }}>
+                          MMSI: <span className="mono">{v.mmsi}</span> · IMO: <span className="mono">{v.imo}</span> · Flag: {v.flag} · {v.type}
+                        </div>
 
-                    <div className="candidate-telemetry-grid" style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: 6, fontSize: 10, background: 'var(--bg-raised)', padding: '6px 8px', borderRadius: 6 }}>
-                      <div>
-                        <span className="text-muted">CPA: </span>
-                        <strong>{v.cpa_nm} nm</strong>
-                      </div>
-                      <div>
-                        <span className="text-muted">SOG: </span>
-                        <strong>{v.sog} kn</strong>
-                      </div>
-                      <div>
-                        <span className="text-muted">Heading: </span>
-                        <strong>{v.cog}°</strong>
-                      </div>
-                      <div style={{ color: (v.ais_gap_hours || 0) > 2.0 ? '#f59e0b' : 'inherit' }}>
-                        <span className="text-muted">AIS Gap: </span>
-                        <strong>{v.ais_gap_hours || 0}h</strong>
-                      </div>
-                    </div>
-
-                    {v.metrics && (
-                      <div style={{ display: 'flex', flexDirection: 'column', gap: 6, marginTop: 4 }}>
-                        <div className="candidate-metrics-grid" style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: 6, fontSize: 9.5 }}>
+                        <div className="candidate-telemetry-grid" style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: 6, fontSize: 10, background: 'var(--bg-raised)', padding: '6px 8px', borderRadius: 6 }}>
                           <div>
-                            <div style={{ color: 'var(--text-muted)', marginBottom: 2, display: 'flex', justifyContent: 'space-between' }}>
-                              <span>Spatial</span>
-                              <span className="mono" style={{ color: 'var(--accent)' }}>+{v.metrics.weighted_dist_val}</span>
-                            </div>
-                            <div style={{ height: 4, borderRadius: 2, background: 'var(--border-subtle)', overflow: 'hidden' }}>
-                              <div style={{ width: `${v.metrics.spatial_match_pct}%`, height: '100%', background: 'var(--accent)' }} />
-                            </div>
-                            <span className="mono" style={{ fontSize: 9 }}>{v.metrics.spatial_match_pct}%</span>
+                            <span className="text-muted">CPA: </span>
+                            <strong>{v.cpa_nm} nm</strong>
                           </div>
                           <div>
-                            <div style={{ color: 'var(--text-muted)', marginBottom: 2, display: 'flex', justifyContent: 'space-between' }}>
-                              <span>Time</span>
-                              <span className="mono" style={{ color: '#10b981' }}>+{v.metrics.weighted_time_val}</span>
-                            </div>
-                            <div style={{ height: 4, borderRadius: 2, background: 'var(--border-subtle)', overflow: 'hidden' }}>
-                              <div style={{ width: `${v.metrics.temporal_alignment_pct}%`, height: '100%', background: '#10b981' }} />
-                            </div>
-                            <span className="mono" style={{ fontSize: 9 }}>{v.metrics.temporal_alignment_pct}%</span>
+                            <span className="text-muted">SOG: </span>
+                            <strong>{v.sog} kn</strong>
                           </div>
                           <div>
-                            <div style={{ color: 'var(--text-muted)', marginBottom: 2, display: 'flex', justifyContent: 'space-between' }}>
-                              <span>Dark Gap</span>
-                              <span className="mono" style={{ color: '#f59e0b' }}>+{v.metrics.weighted_gap_val}</span>
-                            </div>
-                            <div style={{ height: 4, borderRadius: 2, background: 'var(--border-subtle)', overflow: 'hidden' }}>
-                              <div style={{ width: `${v.metrics.dark_gap_suspicion_pct}%`, height: '100%', background: '#f59e0b' }} />
-                            </div>
-                            <span className="mono" style={{ fontSize: 9 }}>{v.metrics.dark_gap_suspicion_pct}%</span>
+                            <span className="text-muted">Heading: </span>
+                            <strong>{v.cog}°</strong>
                           </div>
-                          <div>
-                            <div style={{ color: 'var(--text-muted)', marginBottom: 2, display: 'flex', justifyContent: 'space-between' }}>
-                              <span>Prior</span>
-                              <span className="mono" style={{ color: '#8b5cf6' }}>+{v.metrics.weighted_type_val}</span>
-                            </div>
-                            <div style={{ height: 4, borderRadius: 2, background: 'var(--border-subtle)', overflow: 'hidden' }}>
-                              <div style={{ width: `${v.metrics.vessel_risk_prior_pct}%`, height: '100%', background: '#8b5cf6' }} />
-                            </div>
-                            <span className="mono" style={{ fontSize: 9 }}>{v.metrics.vessel_risk_prior_pct}%</span>
+                          <div style={{ color: (v.ais_gap_hours || 0) > 2.0 ? '#f59e0b' : 'inherit' }}>
+                            <span className="text-muted">AIS Gap: </span>
+                            <strong>{v.ais_gap_hours || 0}h</strong>
                           </div>
                         </div>
 
-                        <div style={{ display: 'flex', height: 4, borderRadius: 2, overflow: 'hidden', background: 'var(--border-subtle)' }} title={`Weighted breakdown: Spatial (+${v.metrics.weighted_dist_val}) + Time (+${v.metrics.weighted_time_val}) + Gap (+${v.metrics.weighted_gap_val}) + Prior (+${v.metrics.weighted_type_val}) = ${v.attribution_score.toFixed(2)}`}>
-                          <div style={{ width: `${((v.metrics.weighted_dist_val || 0) / v.attribution_score) * 100}%`, background: 'var(--accent)' }} />
-                          <div style={{ width: `${((v.metrics.weighted_time_val || 0) / v.attribution_score) * 100}%`, background: '#10b981' }} />
-                          <div style={{ width: `${((v.metrics.weighted_gap_val || 0) / v.attribution_score) * 100}%`, background: '#f59e0b' }} />
-                          <div style={{ width: `${((v.metrics.weighted_type_val || 0) / v.attribution_score) * 100}%`, background: '#8b5cf6' }} />
+                        {v.metrics && (
+                          <div style={{ display: 'flex', flexDirection: 'column', gap: 6, marginTop: 2 }}>
+                            <div className="candidate-metrics-grid" style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: 6, fontSize: 9.5 }}>
+                              <div>
+                                <div style={{ color: 'var(--text-muted)', marginBottom: 2, display: 'flex', justifyContent: 'space-between' }}>
+                                  <span>Spatial</span>
+                                  <span className="mono" style={{ color: 'var(--accent)' }}>+{v.metrics.weighted_dist_val}</span>
+                                </div>
+                                <div style={{ height: 4, borderRadius: 2, background: 'var(--border-subtle)', overflow: 'hidden' }}>
+                                  <div style={{ width: `${v.metrics.spatial_match_pct}%`, height: '100%', background: 'var(--accent)' }} />
+                                </div>
+                                <span className="mono" style={{ fontSize: 9 }}>{v.metrics.spatial_match_pct}%</span>
+                              </div>
+                              <div>
+                                <div style={{ color: 'var(--text-muted)', marginBottom: 2, display: 'flex', justifyContent: 'space-between' }}>
+                                  <span>Time</span>
+                                  <span className="mono" style={{ color: '#10b981' }}>+{v.metrics.weighted_time_val}</span>
+                                </div>
+                                <div style={{ height: 4, borderRadius: 2, background: 'var(--border-subtle)', overflow: 'hidden' }}>
+                                  <div style={{ width: `${v.metrics.temporal_alignment_pct}%`, height: '100%', background: '#10b981' }} />
+                                </div>
+                                <span className="mono" style={{ fontSize: 9 }}>{v.metrics.temporal_alignment_pct}%</span>
+                              </div>
+                              <div>
+                                <div style={{ color: 'var(--text-muted)', marginBottom: 2, display: 'flex', justifyContent: 'space-between' }}>
+                                  <span>Dark Gap</span>
+                                  <span className="mono" style={{ color: '#f59e0b' }}>+{v.metrics.weighted_gap_val}</span>
+                                </div>
+                                <div style={{ height: 4, borderRadius: 2, background: 'var(--border-subtle)', overflow: 'hidden' }}>
+                                  <div style={{ width: `${v.metrics.dark_gap_suspicion_pct}%`, height: '100%', background: '#f59e0b' }} />
+                                </div>
+                                <span className="mono" style={{ fontSize: 9 }}>{v.metrics.dark_gap_suspicion_pct}%</span>
+                              </div>
+                              <div>
+                                <div style={{ color: 'var(--text-muted)', marginBottom: 2, display: 'flex', justifyContent: 'space-between' }}>
+                                  <span>Prior</span>
+                                  <span className="mono" style={{ color: '#8b5cf6' }}>+{v.metrics.weighted_type_val}</span>
+                                </div>
+                                <div style={{ height: 4, borderRadius: 2, background: 'var(--border-subtle)', overflow: 'hidden' }}>
+                                  <div style={{ width: `${v.metrics.vessel_risk_prior_pct}%`, height: '100%', background: '#8b5cf6' }} />
+                                </div>
+                                <span className="mono" style={{ fontSize: 9 }}>{v.metrics.vessel_risk_prior_pct}%</span>
+                              </div>
+                            </div>
+
+                            <div style={{ display: 'flex', height: 4, borderRadius: 2, overflow: 'hidden', background: 'var(--border-subtle)' }} title={`Weighted breakdown: Spatial (+${v.metrics.weighted_dist_val}) + Time (+${v.metrics.weighted_time_val}) + Gap (+${v.metrics.weighted_gap_val}) + Prior (+${v.metrics.weighted_type_val}) = ${v.attribution_score.toFixed(2)}`}>
+                              <div style={{ width: `${((v.metrics.weighted_dist_val || 0) / v.attribution_score) * 100}%`, background: 'var(--accent)' }} />
+                              <div style={{ width: `${((v.metrics.weighted_time_val || 0) / v.attribution_score) * 100}%`, background: '#10b981' }} />
+                              <div style={{ width: `${((v.metrics.weighted_gap_val || 0) / v.attribution_score) * 100}%`, background: '#f59e0b' }} />
+                              <div style={{ width: `${((v.metrics.weighted_type_val || 0) / v.attribution_score) * 100}%`, background: '#8b5cf6' }} />
+                            </div>
+                          </div>
+                        )}
+
+                        {/* Operational Action Buttons Bar */}
+                        <div style={{ display: 'flex', gap: 8, marginTop: 6, paddingTop: 6, borderTop: '1px solid var(--border-subtle)' }}>
+                          <button
+                            type="button"
+                            className="action-pill-btn primary"
+                            style={{ padding: '5px 12px', fontSize: 11, flex: 1, justifyContent: 'center' }}
+                            onClick={() => {
+                              onInspectVesselOnMap?.({
+                                name: v.name,
+                                lat: v.lat,
+                                lng: v.lng,
+                                mmsi: v.mmsi,
+                              });
+                            }}
+                            title="Center tactical map on vessel's estimated track"
+                          >
+                            <span className="material-symbols-outlined" style={{ fontSize: 14 }}>explore</span>
+                            <span>Inspect Track on Map</span>
+                          </button>
+
+                          <button
+                            type="button"
+                            className="action-pill-btn secondary"
+                            style={{ padding: '5px 12px', fontSize: 11, flex: 1, justifyContent: 'center' }}
+                            onClick={() => {
+                              onSelectTab?.('evidence');
+                            }}
+                            title="Generate MARPOL Annex I Legal Evidence Dossier"
+                          >
+                            <span className="material-symbols-outlined" style={{ fontSize: 14 }}>gavel</span>
+                            <span>MARPOL Dossier</span>
+                          </button>
                         </div>
                       </div>
                     )}

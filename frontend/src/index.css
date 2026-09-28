@@ -1309,11 +1309,17 @@ svg { display: block; flex-shrink: 0; }
   gap: 8px;
 }
 
-/* On investigative tabs with long content, allow natural height and full-page scrolling (except tactical map dashboard and vessel attribution which use dedicated viewport pane scrolling) */
-.modern-dashboard-root:not(#tab-dashboard):not(#tab-attribution) {
+/* On investigative tabs with long content, allow natural height and full-page scrolling (except tactical map dashboard which uses dedicated viewport pane scrolling) */
+.modern-dashboard-root:not(#tab-dashboard) {
   height: auto;
   min-height: 100%;
   padding-bottom: 24px;
+}
+
+#tab-attribution {
+  height: auto;
+  min-height: 100%;
+  overflow: visible;
 }
 
 .workspace-header-bar {
@@ -1478,6 +1484,8 @@ svg { display: block; flex-shrink: 0; }
   display: flex;
   justify-content: space-between;
   align-items: center;
+  gap: 12px;
+  margin: 6px 0 8px 0;
   padding: 0 4px;
   flex-shrink: 0;
 }
@@ -1485,44 +1493,58 @@ svg { display: block; flex-shrink: 0; }
 .workflow-title-area {
   display: flex;
   align-items: center;
-  gap: 10px;
+  gap: 8px;
+  flex-shrink: 0;
 }
 
 .workflow-title {
-  font-size: 13.5px;
+  font-size: 13px;
   font-weight: 700;
   color: var(--text-primary);
+  white-space: nowrap;
+  letter-spacing: -0.01em;
 }
 
 .scenario-chip {
   border: 1px solid;
   border-radius: 12px;
-  padding: 1px 7px;
+  padding: 2px 8px;
   font-size: 10px;
   font-weight: 600;
   background: rgba(0, 0, 0, 0.03);
+  white-space: nowrap;
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
 }
 
 .workflow-tabs-strip {
   display: flex;
+  align-items: center;
   gap: 4px;
   background: rgba(0, 0, 0, 0.04);
-  padding: 3px;
+  padding: 3px 4px;
   border-radius: 10px;
   border: 1px solid var(--border-subtle);
+  flex-shrink: 0;
 }
 
 .workflow-tab-btn {
   border: none;
   background: transparent;
   padding: 5px 12px;
-  border-radius: 8px;
-  font-size: 12px;
+  border-radius: 7px;
+  font-size: 11.5px;
   font-weight: 600;
   color: var(--text-muted);
   transition: all 0.15s;
   position: relative;
   cursor: pointer;
+  white-space: nowrap;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  line-height: 1.2;
 }
 .workflow-tab-btn:hover {
   color: var(--text-primary);
@@ -1531,6 +1553,13 @@ svg { display: block; flex-shrink: 0; }
   background: var(--bg-surface);
   color: var(--text-primary);
   box-shadow: 0 2px 6px rgba(0, 0, 0, 0.06);
+}
+
+.workflow-nav-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-shrink: 0;
 }
 
 /* CANVAS ROUNDED CONTAINER (Houses MapPanel on Dashboard, or Content Panes on Other Tabs) */
@@ -1545,7 +1574,7 @@ svg { display: block; flex-shrink: 0; }
   background: var(--bg-surface);
 }
 
-.modern-dashboard-root:not(#tab-dashboard):not(#tab-attribution) .canvas-rounded-container {
+.modern-dashboard-root:not(#tab-dashboard) .canvas-rounded-container {
   flex: none;
   height: auto;
   min-height: auto;
@@ -1644,7 +1673,7 @@ svg { display: block; flex-shrink: 0; }
   overflow: hidden;
 }
 
-.modern-dashboard-root:not(#tab-dashboard):not(#tab-attribution) .canvas-two-column {
+.modern-dashboard-root:not(#tab-dashboard) .canvas-two-column {
   height: auto;
   min-height: auto;
   overflow: visible;
@@ -1667,56 +1696,10 @@ svg { display: block; flex-shrink: 0; }
   overflow-x: hidden;
 }
 
-.modern-dashboard-root:not(#tab-dashboard):not(#tab-attribution) .canvas-pane {
+.modern-dashboard-root:not(#tab-dashboard) .canvas-pane {
   height: auto;
   min-height: auto;
   overflow: visible;
-}
-
-/* Tab Attribution Dedicated Split-Pane Scroll */
-#tab-attribution {
-  height: 100%;
-  min-height: 0;
-  overflow: hidden;
-}
-
-#tab-attribution .canvas-rounded-container {
-  flex: 1;
-  min-height: 0;
-  height: 100%;
-  overflow: hidden;
-}
-
-#tab-attribution .canvas-two-column {
-  height: 100%;
-  min-height: 0;
-  overflow: hidden;
-}
-
-#tab-attribution .canvas-pane {
-  height: 100%;
-  min-height: 0;
-  overflow-y: auto;
-  overflow-x: hidden;
-  scrollbar-width: thin;
-  scrollbar-color: var(--border-subtle) transparent;
-}
-
-#tab-attribution .canvas-pane::-webkit-scrollbar {
-  width: 6px;
-}
-
-#tab-attribution .canvas-pane::-webkit-scrollbar-track {
-  background: transparent;
-}
-
-#tab-attribution .canvas-pane::-webkit-scrollbar-thumb {
-  background: var(--border-subtle);
-  border-radius: 4px;
-}
-
-#tab-attribution .canvas-pane::-webkit-scrollbar-thumb:hover {
-  background: var(--text-muted);
 }
 
 .pane-header {

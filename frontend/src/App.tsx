@@ -254,7 +254,7 @@ export const App: React.FC = () => {
           className="main"
           id="main-content"
           style={{
-            overflow: activeTab === 'dashboard' || activeTab === 'attribution' ? 'hidden' : 'auto',
+            overflow: activeTab === 'dashboard' ? 'hidden' : 'auto',
           }}
         >
           {activeTab === 'dashboard' && (
@@ -285,6 +285,18 @@ export const App: React.FC = () => {
             <AttributionView
               currentScenario={scenario}
               onSelectScenario={handleSelectScenario}
+              onSelectTab={setActiveTab}
+              onInspectVesselOnMap={(v) => {
+                setTargetLocation({
+                  lat: v.lat,
+                  lng: v.lng,
+                  zoom: 12,
+                  title: v.name,
+                  sub: `MMSI: ${v.mmsi} · AIS Suspect Track`,
+                  category: 'vessel',
+                });
+                setActiveTab('dashboard');
+              }}
             />
           )}
 
