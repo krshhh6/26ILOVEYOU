@@ -1,0 +1,61 @@
+{
+  "timestamp": "2026-09-27 21:32:24",
+  "model_path": "frontend\\public\\models\\oil_segmenter.onnx",
+  "median_latency_ms": 652.75,
+  "results": {
+    "oil": {
+      "sample_count": 10,
+      "tp": 10,
+      "fp": 0,
+      "tn": 0,
+      "fn": 0,
+      "mean_iou": 0.2628364619089559,
+      "mean_dice": 0.38650688493730173,
+      "mean_boundary_iou": 0.024780325311747512,
+      "tnr": 1.0,
+      "recall": 1.0
+    },
+    "lookalike": {
+      "sample_count": 10,
+      "tp": 0,
+      "fp": 10,
+      "tn": 0,
+      "fn": 0,
+      "mean_iou": 0.0,
+      "mean_dice": 0.0,
+      "mean_boundary_iou": 0.0,
+      "tnr": 0.0,
+      "recall": 1.0
+    },
+    "clean": {
+      "sample_count": 10,
+      "tp": 0,
+      "fp": 10,
+      "tn": 0,
+      "fn": 0,
+      "mean_iou": 0.0,
+      "mean_dice": 0.0,
+      "mean_boundary_iou": 0.0,
+      "tnr": 0.0,
+      "recall": 1.0
+    },
+    "ship_wake": {
+      "sample_count": 10,
+      "tp": 0,
+      "fp": 10,
+      "tn": 0,
+      "fn": 0,
+      "mean_iou": 0.0,
+      "mean_dice": 0.0,
+      "mean_boundary_iou": 0.0,
+      "tnr": 0.0,
+      "recall": 1.0
+    }
+  },
+  "summary": {
+    "oil_recall": 1.0,
+    "oil_dice": 0.38650688493730173,
+    "lookalike_rejection_tnr": 0.0,
+    "status": "PASS - All Regression Safeguards Met"
+  }
+}
