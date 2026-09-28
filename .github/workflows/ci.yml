@@ -42,6 +42,7 @@ jobs:
         with:
           python-version: "3.11"
           cache: 'pip'
+          cache-dependency-path: backend/requirements.txt
 
       - name: Install Dependencies
         run: |
@@ -50,5 +51,8 @@ jobs:
           pip install pytest httpx
 
       - name: Run Pytest Test Suite
+        env:
+          PYTHONPATH: backend
         run: |
           pytest tests/test_sar_intelligence.py -v
+
