@@ -281,7 +281,7 @@ export function validateSarImage(data: Uint8ClampedArray, width: number, height:
   const features = computeSarFeatures(data, width, height);
   const {
     meanBrightness, brightRatio, coloredRatio, avgColorDiff, isColor,
-    flatRatio, speckleRatio, histEntropy, distinctLevels,
+    flatRatio, histEntropy, distinctLevels,
     maxModeRatio, maxModeVal
   } = features;
 
@@ -289,10 +289,10 @@ export function validateSarImage(data: Uint8ClampedArray, width: number, height:
   // REJECTION 1: Optical Color Photography or Colored Software UI
   // Real SAR ocean radar is single-channel/dual-pol microwave backscatter (0% color).
   // ============================================================
-  if (coloredRatio > 0.15 && avgColorDiff > 12.0) {
+  if (coloredRatio > 0.05 && avgColorDiff > 3.0) {
     return {
       isValid: false,
-      reason: `Optical Color / UI Graphics Detected — ${(coloredRatio * 100).toFixed(0)}% colored pixels (avg chroma ${avgColorDiff.toFixed(1)}). SAR is microwave radar, not visible-light color photography.`,
+      reason: `Optical Color / UI Graphics Detected — ${(coloredRatio * 100).toFixed(1)}% colored pixels (avg chroma ${avgColorDiff.toFixed(1)}). SAR is microwave radar, not visible-light color photography.`,
       metrics: { meanBrightness, brightRatio, sharpTransitions: flatRatio, isColor: true }
     };
   }
@@ -301,7 +301,7 @@ export function validateSarImage(data: Uint8ClampedArray, width: number, height:
   // REJECTION 2: Non-marine High-Luminance UI / Document / Web Browser Screenshot
   // Real SAR sea mean is 70–130 DN; bright pixels (>190 DN) are rare point targets (<32%, avg 2.8%).
   // ============================================================
-  if ((brightRatio > 0.40 && meanBrightness > 165) || meanBrightness > 185 || brightRatio > 0.55) {
+  if ((brightRatio > 0.35 && meanBrightness > 155) || meanBrightness > 185 || brightRatio > 0.50) {
     return {
       isValid: false,
       reason: `Document / UI Screenshot — non-marine high-luminance scene (mean lum ${meanBrightness.toFixed(0)}, ${(brightRatio * 100).toFixed(0)}% bright pixels). Real SAR sea returns are dark to medium-gray microwave backscatter.`,
@@ -311,38 +311,28 @@ export function validateSarImage(data: Uint8ClampedArray, width: number, height:
 
   // ============================================================
   // REJECTION 3: Blank / Solid Uniform Graphic (Paint canvas, blank shape)
+  // Real SAR mode ratio is <= 0.33. Synthetic Paint drawings typically have 50-90% flat background.
   // ============================================================
-  if (flatRatio > 0.60 && speckleRatio < 0.02) {
+  if (maxModeRatio > 0.45 && maxModeVal > 0) {
     return {
       isValid: false,
-      reason: `Synthetic / Paint Graphic — lacks physical radar speckle noise (${(flatRatio * 100).toFixed(0)}% flat fill, ${(speckleRatio * 100).toFixed(1)}% speckle). Real SAR exhibits Rayleigh speckle across sea surfaces.`,
+      reason: `Single Solid Color Canvas — ${(maxModeRatio * 100).toFixed(0)}% of image is one flat value (${maxModeVal} DN, not radar backscatter)`,
+      metrics: { meanBrightness, brightRatio, sharpTransitions: flatRatio, isColor }
+    };
+  }
+
+  if (flatRatio > 0.45) {
+    return {
+      isValid: false,
+      reason: `Synthetic / Paint Graphic — lacks physical radar speckle noise (${(flatRatio * 100).toFixed(0)}% flat fill). Real SAR exhibits Rayleigh speckle across sea surfaces.`,
       metrics: { meanBrightness, brightRatio, sharpTransitions: flatRatio, isColor }
     };
   }
 
   // ============================================================
-  // REJECTION 4: Dominant single flat color
+  // REJECTION 4: Low entropy / low distinct levels (Paint drawings / vector art)
   // ============================================================
-  if (maxModeRatio > 0.75 && maxModeVal > 0) {
-    return {
-      isValid: false,
-      reason: `Single Solid Color Canvas — ${(maxModeRatio * 100).toFixed(0)}% of image is one flat value (not radar backscatter)`,
-      metrics: { meanBrightness, brightRatio, sharpTransitions: flatRatio, isColor }
-    };
-  }
-
-  // ============================================================
-  // REJECTION 5: Low entropy / low distinct levels (Paint drawings / vector art)
-  // ============================================================
-  if (distinctLevels < 25 && flatRatio > 0.40) {
-    return {
-      isValid: false,
-      reason: `Synthetic Drawing / Vector Art — only ${distinctLevels} distinct intensity levels (real SAR has continuous backscatter distribution >60 levels)`,
-      metrics: { meanBrightness, brightRatio, sharpTransitions: flatRatio, isColor }
-    };
-  }
-
-  if (histEntropy < 3.2 && flatRatio > 0.40) {
+  if (histEntropy < 3.8 && flatRatio > 0.25) {
     return {
       isValid: false,
       reason: `Synthetic Graphic — low Shannon entropy (${histEntropy.toFixed(2)} bits, real SAR typically >5.0 bits)`,
@@ -350,8 +340,16 @@ export function validateSarImage(data: Uint8ClampedArray, width: number, height:
     };
   }
 
+  if (distinctLevels < 30 && flatRatio > 0.30) {
+    return {
+      isValid: false,
+      reason: `Synthetic Drawing / Vector Art — only ${distinctLevels} distinct intensity levels (real SAR has continuous backscatter distribution >60 levels)`,
+      metrics: { meanBrightness, brightRatio, sharpTransitions: flatRatio, isColor }
+    };
+  }
+
   // ============================================================
-  // REJECTION 6: Pure dark void
+  // REJECTION 5: Pure dark void
   // ============================================================
   if (meanBrightness < 4) {
     return {
@@ -980,7 +978,28 @@ export async function classifyImage(
     aspectRatio: +(appliedCrop.width / appliedCrop.height).toFixed(2),
   };
 
-  // Domain validation
+  // Domain validation 1: Check full uncropped scene (catches desktop UI, browser frames, document borders)
+  const fullValCanvas = document.createElement('canvas');
+  fullValCanvas.width = 400;
+  fullValCanvas.height = 400;
+  const fullValCtx = fullValCanvas.getContext('2d')!;
+  fullValCtx.drawImage(imageElement, 0, 0, 400, 400);
+  const fullData = fullValCtx.getImageData(0, 0, 400, 400).data;
+  const fullValidation = validateSarImage(fullData, 400, 400);
+  if (!fullValidation.isValid) {
+    return {
+      imageFile: imageElement instanceof HTMLImageElement ? imageElement.src : 'canvas',
+      prediction: 'invalid_sar',
+      confidence: 0,
+      inferenceTimeMs: Math.round(performance.now() - start),
+      errorMessage: 'Uploaded image is not a Synthetic Aperture Radar (SAR) ocean scene.',
+      rejectionReason: fullValidation.reason,
+      metrics: fullValidation.metrics,
+      cropInfo,
+    };
+  }
+
+  // Domain validation 2: Check active cropped ROI
   const validation = validateSarImage(data, 400, 400);
   if (!validation.isValid) {
     return {
@@ -1281,6 +1300,67 @@ async function runSegmentation(
   const ambientOceanMean = marineCount > 0 ? sumMarine / marineCount : 90;
   const landBuffer = computeLandBufferMask(grayValues, 512, 512, 5);
 
+  // Detect outer artificial border margins (dark bands / letterbox bars touching canvas boundary)
+  const borderMask = new Uint8Array(numPixels);
+  const borderThresh = Math.max(20, Math.min(48, ambientOceanMean * 0.50));
+
+  let leftBorderWidth = 0;
+  while (leftBorderWidth < 32) {
+    let colDark = 0;
+    for (let y = 0; y < 512; y++) {
+      if (grayValues[y * 512 + leftBorderWidth] <= borderThresh) colDark++;
+    }
+    if (colDark / 512 > 0.60) leftBorderWidth++;
+    else break;
+  }
+
+  let rightBorderWidth = 0;
+  while (rightBorderWidth < 32) {
+    let colDark = 0;
+    const colX = 511 - rightBorderWidth;
+    for (let y = 0; y < 512; y++) {
+      if (grayValues[y * 512 + colX] <= borderThresh) colDark++;
+    }
+    if (colDark / 512 > 0.60) rightBorderWidth++;
+    else break;
+  }
+
+  let topBorderHeight = 0;
+  while (topBorderHeight < 32) {
+    let rowDark = 0;
+    for (let x = 0; x < 512; x++) {
+      if (grayValues[topBorderHeight * 512 + x] <= borderThresh) rowDark++;
+    }
+    if (rowDark / 512 > 0.60) topBorderHeight++;
+    else break;
+  }
+
+  let bottomBorderHeight = 0;
+  while (bottomBorderHeight < 32) {
+    let rowDark = 0;
+    const rowY = 511 - bottomBorderHeight;
+    for (let x = 0; x < 512; x++) {
+      if (grayValues[rowY * 512 + x] <= borderThresh) rowDark++;
+    }
+    if (rowDark / 512 > 0.60) bottomBorderHeight++;
+    else break;
+  }
+
+  // Fill borderMask for detected border margins plus the outer 3-pixel perimeter
+  for (let y = 0; y < 512; y++) {
+    for (let x = 0; x < 512; x++) {
+      const idx = y * 512 + x;
+      if (
+        x < Math.max(3, leftBorderWidth) ||
+        x >= 512 - Math.max(3, rightBorderWidth) ||
+        y < Math.max(3, topBorderHeight) ||
+        y >= 512 - Math.max(3, bottomBorderHeight)
+      ) {
+        borderMask[idx] = 1;
+      }
+    }
+  }
+
   const tensorData = new Float32Array(2 * numPixels);
   const hasDirectRasters = !cropBox &&
                            dualPolRasters?.vvRaster && dualPolRasters?.vhRaster &&
@@ -1297,7 +1377,7 @@ async function runSegmentation(
     const ambNormalized = (marineCount > 0 ? sumMarine / marineCount : 120) / 255.0;
     for (let i = 0; i < numPixels; i++) {
       const gray = grayValues[i];
-      if (gray < 12) {
+      if (gray < 12 || borderMask[i] === 1) {
         // Synthetic black border / letterbox padding: pad with ambient ocean
         tensorData[i] = ambNormalized;
         tensorData[numPixels + i] = Math.max(0.0, ambNormalized - 0.22);
@@ -1332,7 +1412,8 @@ async function runSegmentation(
     // 2. Real radar signal (rawG >= 12), not synthetic black void / border
     // 3. Physical capillary damping: lower backscatter than ambient sea (rawG <= dampThreshold)
     // 4. Terrestrial land & coastal buffer exclusion
-    if (prob >= 0.45 && rawG >= 12 && rawG <= dampThreshold && landBuffer[i] === 0) {
+    // 5. Artificial border exclusion
+    if (prob >= 0.45 && rawG >= 12 && rawG <= dampThreshold && landBuffer[i] === 0 && borderMask[i] === 0) {
       rawCandidateMask[i] = 1;
     }
   }
@@ -1464,6 +1545,45 @@ export async function generateOcclusionMap(
   const ambientOceanMean = marineCount > 0 ? marineSum / marineCount : 90;
   const landBuffer = computeLandBufferMask(new Uint8Array(grayValues), mapDim, mapDim, 4);
 
+  // Detect artificial border margins in occlusion canvas to avoid red border stripes
+  const borderMask = new Uint8Array(numPixels);
+  const borderThresh = Math.max(20, Math.min(48, ambientOceanMean * 0.50));
+
+  let leftBorderWidth = 0;
+  while (leftBorderWidth < 25) {
+    let colDark = 0;
+    for (let y = 0; y < mapDim; y++) {
+      if (grayValues[y * mapDim + leftBorderWidth] <= borderThresh) colDark++;
+    }
+    if (colDark / mapDim > 0.60) leftBorderWidth++;
+    else break;
+  }
+
+  let rightBorderWidth = 0;
+  while (rightBorderWidth < 25) {
+    let colDark = 0;
+    const colX = mapDim - 1 - rightBorderWidth;
+    for (let y = 0; y < mapDim; y++) {
+      if (grayValues[y * mapDim + colX] <= borderThresh) colDark++;
+    }
+    if (colDark / mapDim > 0.60) rightBorderWidth++;
+    else break;
+  }
+
+  for (let y = 0; y < mapDim; y++) {
+    for (let x = 0; x < mapDim; x++) {
+      const idx = y * mapDim + x;
+      if (
+        x < Math.max(4, leftBorderWidth) ||
+        x >= mapDim - Math.max(4, rightBorderWidth) ||
+        y < 4 ||
+        y >= mapDim - 4
+      ) {
+        borderMask[idx] = 1;
+      }
+    }
+  }
+
   // ===================================================================
   // CLASSIC OCCLUSION SENSITIVITY — RECTANGULAR PATCH GRID
   // For each grid cell (patch), compute the mean capillary damping
@@ -1479,7 +1599,7 @@ export async function generateOcclusionMap(
   const rawAttribution = new Float32Array(numPixels);
 
   for (let i = 0; i < numPixels; i++) {
-    if (landBuffer[i] > 0 || grayValues[i] < 10) {
+    if (landBuffer[i] > 0 || grayValues[i] < 10 || borderMask[i] === 1) {
       rawAttribution[i] = 0;
       continue;
     }

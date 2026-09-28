@@ -956,7 +956,7 @@ export const DetectionView: React.FC<DetectionViewProps> = ({
                   <div style={{ background: 'var(--bg-raised)', border: '1px solid var(--border-subtle)', borderRadius: 12, padding: 12, display: 'flex', flexDirection: 'column', gap: 8 }}>
                     <div style={{ fontSize: 12, fontWeight: 700, color: '#DC2626', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
                       <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-                        <span>🎯 DANN Multi-Scale U-Net Mask</span>
+                        <span>🎯 SpillSegNet U-Net Mask</span>
                         <span style={{ fontSize: 10, color: '#10B981', background: 'rgba(16, 185, 129, 0.12)', padding: '1px 6px', borderRadius: 4, fontWeight: 700 }}>
                           Physics-Gated ✓
                         </span>
@@ -965,7 +965,7 @@ export const DetectionView: React.FC<DetectionViewProps> = ({
                     </div>
                     <div style={{ position: 'relative', width: '100%', aspectRatio: panelAspect, maxHeight: 460, minHeight: 220, borderRadius: 8, overflow: 'hidden', background: '#0F172A', border: '1px solid var(--border-subtle)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
                       <img src={selectedImage} alt="Original" style={{ position: 'absolute', top: 0, left: 0, width: '100%', height: '100%', objectFit: 'contain' }} />
-                      <img src={result.segmentationMask} alt="DANN Multi-Scale Mask" style={{ position: 'absolute', top: 0, left: 0, width: '100%', height: '100%', objectFit: 'contain', zIndex: 1 }} />
+                      <img src={result.segmentationMask} alt="SpillSegNet Mask" style={{ position: 'absolute', top: 0, left: 0, width: '100%', height: '100%', objectFit: 'contain', zIndex: 1 }} />
                     </div>
                   </div>
                 )}
@@ -1050,7 +1050,7 @@ export const DetectionView: React.FC<DetectionViewProps> = ({
                     2D Swath Tilt Compensation: Active
                   </span>
                   <span style={{ fontSize: 11, padding: '2px 8px', borderRadius: 4, background: 'rgba(139,92,246,0.08)', color: '#8B5CF6', fontWeight: 600 }}>
-                    Engine: DANN Multi-Scale v2.0
+                    Engine: SpillSegNet v3.0
                   </span>
                 </div>
               </div>
