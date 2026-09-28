@@ -221,6 +221,13 @@ export const DetectionView: React.FC<DetectionViewProps> = ({
             maskUrl: res.segmentationMask,
           });
           setAnalyticsResult(analytics);
+
+          // Auto-generate high-resolution thermal attention map for full 3-panel display
+          generateOcclusionMap(img, cropBox || undefined).then((url) => {
+            setHeatmapUrl(url);
+          }).catch((err) => {
+            console.warn('[SAR] Heatmap auto-generation warning:', err);
+          });
         } else {
           setAnalyticsResult(null);
         }

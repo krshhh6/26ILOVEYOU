@@ -308,8 +308,8 @@ function computeDeterministicPhysicsScore(
   if (meanLum < 25 && dampRatio > 0.85) {
     logit -= 2.5;
   }
-  // Penalize bright ocean clutter
-  if (meanLum > 130) {
+  // Penalize bright ocean clutter ONLY if there is no significant dark slick damping
+  if (meanLum > 130 && dampRatio < 0.015) {
     logit -= 2.0;
   }
 
@@ -492,9 +492,11 @@ export function detectActiveSarViewport(
   ctx.drawImage(source, 0, 0, sampleDim, sampleDim);
   const data = ctx.getImageData(0, 0, sampleDim, sampleDim).data;
 
-  // Compute row and column mean luminance
+  // Compute row and column mean luminance and standard deviation
   const rowLum = new Float32Array(sampleDim);
   const colLum = new Float32Array(sampleDim);
+  const rowStd = new Float32Array(sampleDim);
+  const colStd = new Float32Array(sampleDim);
 
   for (let y = 0; y < sampleDim; y++) {
     let rSum = 0;
@@ -503,7 +505,15 @@ export function detectActiveSarViewport(
       const lum = 0.299 * data[idx] + 0.587 * data[idx + 1] + 0.114 * data[idx + 2];
       rSum += lum;
     }
-    rowLum[y] = rSum / sampleDim;
+    const mean = rSum / sampleDim;
+    rowLum[y] = mean;
+    let varSum = 0;
+    for (let x = 0; x < sampleDim; x++) {
+      const idx = (y * sampleDim + x) * 4;
+      const lum = 0.299 * data[idx] + 0.587 * data[idx + 1] + 0.114 * data[idx + 2];
+      varSum += (lum - mean) * (lum - mean);
+    }
+    rowStd[y] = Math.sqrt(varSum / sampleDim);
   }
 
   for (let x = 0; x < sampleDim; x++) {
@@ -513,28 +523,38 @@ export function detectActiveSarViewport(
       const lum = 0.299 * data[idx] + 0.587 * data[idx + 1] + 0.114 * data[idx + 2];
       cSum += lum;
     }
-    colLum[x] = cSum / sampleDim;
+    const mean = cSum / sampleDim;
+    colLum[x] = mean;
+    let varSum = 0;
+    for (let y = 0; y < sampleDim; y++) {
+      const idx = (y * sampleDim + x) * 4;
+      const lum = 0.299 * data[idx] + 0.587 * data[idx + 1] + 0.114 * data[idx + 2];
+      varSum += (lum - mean) * (lum - mean);
+    }
+    colStd[x] = Math.sqrt(varSum / sampleDim);
   }
 
-  // Detect top and bottom letterbox (rows with mean lum < 10)
+  // Detect synthetic letterbox/pillarbox or dark UI container padding:
+  // Either nearly black (lum < 15) or low-variance dark background (lum < 38 and std < 5.0)
+  const isBorder = (lum: number, std: number) => lum < 15 || (lum < 38 && std < 5.0);
+
   let top = 0;
-  while (top < Math.floor(sampleDim * 0.35) && rowLum[top] < 10) {
+  while (top < Math.floor(sampleDim * 0.35) && isBorder(rowLum[top], rowStd[top])) {
     top++;
   }
 
   let bottom = sampleDim - 1;
-  while (bottom > Math.floor(sampleDim * 0.65) && rowLum[bottom] < 10) {
+  while (bottom > Math.floor(sampleDim * 0.65) && isBorder(rowLum[bottom], rowStd[bottom])) {
     bottom--;
   }
 
-  // Detect left and right pillarbox (cols with mean lum < 10)
   let left = 0;
-  while (left < Math.floor(sampleDim * 0.35) && colLum[left] < 10) {
+  while (left < Math.floor(sampleDim * 0.35) && isBorder(colLum[left], colStd[left])) {
     left++;
   }
 
   let right = sampleDim - 1;
-  while (right > Math.floor(sampleDim * 0.65) && colLum[right] < 10) {
+  while (right > Math.floor(sampleDim * 0.65) && isBorder(colLum[right], colStd[right])) {
     right--;
   }
 
@@ -709,8 +729,13 @@ export function autoDetectCapillaryDampingROI(
   const srcW = source instanceof HTMLImageElement ? (source.naturalWidth || source.width) : source.width;
   const srcH = source instanceof HTMLImageElement ? (source.naturalHeight || source.height) : source.height;
 
-  const minDim = Math.min(srcW, srcH);
-  if (minDim <= 400) {
+  // First detect if image contains synthetic letterbox or dark container padding
+  const vp = detectActiveSarViewport(source, srcW, srcH);
+  const activeW = vp.width;
+  const activeH = vp.height;
+  const minDim = Math.min(activeW, activeH);
+
+  if (minDim <= 400 && !vp.hasLetterbox) {
     const size = minDim;
     return {
       x: Math.max(0, Math.floor((srcW - size) / 2)),
@@ -725,7 +750,9 @@ export function autoDetectCapillaryDampingROI(
   canvas.width = gridDim;
   canvas.height = gridDim;
   const ctx = canvas.getContext('2d')!;
-  ctx.drawImage(source, 0, 0, gridDim, gridDim);
+
+  // Draw strictly from the active SAR viewport (discarding synthetic borders)
+  ctx.drawImage(source, vp.x, vp.y, activeW, activeH, 0, 0, gridDim, gridDim);
 
   const imgData = ctx.getImageData(0, 0, gridDim, gridDim);
   const data = imgData.data;
@@ -741,14 +768,14 @@ export function autoDetectCapillaryDampingROI(
     const b = data[i * 4 + 2];
     const gray = Math.round(0.299 * r + 0.587 * g + 0.114 * b);
     grayValues[i] = gray;
-    if (gray >= 12 && gray <= 170) {
+    if (gray >= 15 && gray <= 175) {
       totalMarine++;
       marineLuminanceSum += gray;
     }
   }
 
-  const ambientOceanMean = totalMarine > 0 ? marineLuminanceSum / totalMarine : 85;
-  const dampThreshold = Math.min(65, ambientOceanMean - 18);
+  const ambientOceanMean = totalMarine > 0 ? marineLuminanceSum / totalMarine : 90;
+  const dampThreshold = Math.min(68, ambientOceanMean - 18);
 
   // Scan candidate damped pixels
   let minX = gridDim, maxX = 0, minY = gridDim, maxY = 0;
@@ -758,7 +785,7 @@ export function autoDetectCapillaryDampingROI(
   for (let y = 0; y < gridDim; y++) {
     for (let x = 0; x < gridDim; x++) {
       const g = grayValues[y * gridDim + x];
-      if (g >= 10 && g <= dampThreshold) {
+      if (g >= 12 && g <= dampThreshold) {
         dampedCount++;
         sumX += x;
         sumY += y;
@@ -770,28 +797,28 @@ export function autoDetectCapillaryDampingROI(
     }
   }
 
-  // If no clear damping cluster was found, fallback to centered crop
+  // If no clear damping cluster was found, fallback to viewport center
   if (dampedCount < 20 || minX > maxX) {
     const targetSize = Math.round(minDim * 0.85);
     return {
-      x: Math.max(0, Math.floor((srcW - targetSize) / 2)),
-      y: Math.max(0, Math.floor((srcH - targetSize) / 2)),
+      x: Math.max(0, vp.x + Math.floor((activeW - targetSize) / 2)),
+      y: Math.max(0, vp.y + Math.floor((activeH - targetSize) / 2)),
       width: targetSize,
       height: targetSize,
     };
   }
 
-  const scaleX = srcW / gridDim;
-  const scaleY = srcH / gridDim;
+  const scaleX = activeW / gridDim;
+  const scaleY = activeH / gridDim;
 
   const slickW = (maxX - minX + 1) * scaleX;
   const slickH = (maxY - minY + 1) * scaleY;
-  const centerX = (sumX / dampedCount) * scaleX;
-  const centerY = (sumY / dampedCount) * scaleY;
+  const centerX = vp.x + (sumX / dampedCount) * scaleX;
+  const centerY = vp.y + (sumY / dampedCount) * scaleY;
 
   // Add 35% margin around the slick for sea context
   const slickDim = Math.max(slickW, slickH);
-  const targetPxSize = Math.round(Math.max(256, Math.min(minDim, slickDim * 1.5)));
+  const targetPxSize = Math.round(Math.max(256, Math.min(minDim, slickDim * 1.4)));
   const finalSize = Math.min(minDim, targetPxSize);
 
   const finalX = Math.max(0, Math.min(srcW - finalSize, Math.round(centerX - finalSize / 2)));
@@ -869,6 +896,48 @@ export async function classifyImage(
     };
   }
 
+function scanCapillaryWaveDamping(
+  data: Uint8ClampedArray,
+  width: number,
+  height: number
+): { dampRatio: number; coreRatio: number; hasProminentSlick: boolean } {
+  const total = width * height;
+  let marineCount = 0;
+  let marineSum = 0;
+  for (let i = 0; i < total; i++) {
+    const r = data[i * 4];
+    const g = data[i * 4 + 1];
+    const b = data[i * 4 + 2];
+    const lum = 0.299 * r + 0.587 * g + 0.114 * b;
+    if (lum >= 15 && lum <= 175) {
+      marineSum += lum;
+      marineCount++;
+    }
+  }
+  const ambMean = marineCount > 0 ? marineSum / marineCount : 90;
+  const dampThresh = Math.min(68, ambMean - 18);
+  const coreThresh = Math.min(45, ambMean - 30);
+
+  let damped = 0;
+  let core = 0;
+  for (let i = 0; i < total; i++) {
+    const r = data[i * 4];
+    const g = data[i * 4 + 1];
+    const b = data[i * 4 + 2];
+    const lum = 0.299 * r + 0.587 * g + 0.114 * b;
+    if (lum >= 12 && lum <= dampThresh) {
+      damped++;
+      if (lum <= coreThresh) core++;
+    }
+  }
+
+  const denominator = marineCount > 0 ? marineCount : total;
+  const dampRatio = damped / denominator;
+  const coreRatio = core / denominator;
+  const hasProminentSlick = (dampRatio >= 0.015 && coreRatio >= 0.003) || dampRatio >= 0.04;
+  return { dampRatio, coreRatio, hasProminentSlick };
+}
+
   // Real ONNX inference
   const numPixels = 400 * 400;
   const tensorData = new Float32Array(2 * numPixels);
@@ -876,6 +945,21 @@ export async function classifyImage(
                            dualPolRasters?.vvRaster && dualPolRasters?.vhRaster &&
                            dualPolRasters.vvRaster.length === numPixels &&
                            dualPolRasters.vhRaster.length === numPixels;
+
+  // Compute ambient marine luminance to pad synthetic black letterbox / UI container margins
+  let marineSum = 0;
+  let marineCount = 0;
+  for (let i = 0; i < numPixels; i++) {
+    const r = data[i * 4];
+    const g = data[i * 4 + 1];
+    const b = data[i * 4 + 2];
+    const lum = 0.299 * r + 0.587 * g + 0.114 * b;
+    if (lum >= 15 && lum <= 180) {
+      marineSum += lum;
+      marineCount++;
+    }
+  }
+  const ambNormalized = (marineCount > 0 ? marineSum / marineCount : 120) / 255.0;
 
   for (let i = 0; i < numPixels; i++) {
     if (hasDirectRasters) {
@@ -885,7 +969,9 @@ export async function classifyImage(
       const r = data[i * 4];
       const g = data[i * 4 + 1];
       const b = data[i * 4 + 2];
-      const vv = (0.299 * r + 0.587 * g + 0.114 * b) / 255.0;
+      const lum = 0.299 * r + 0.587 * g + 0.114 * b;
+      // Pad synthetic dark borders (< 12 DN) with ambient sea so global pooling is not degraded
+      const vv = lum < 12 ? ambNormalized : lum / 255.0;
       const vh = Math.max(0.0, vv - 0.22);
       tensorData[i] = vv;
       tensorData[numPixels + i] = vh;
@@ -898,74 +984,108 @@ export async function classifyImage(
 
   const results = await classifierSession.run(feeds);
   const logit = results[classifierSession.outputNames[0]].data[0] as number;
-  const prob = sigmoid(logit);
+  const clsProb = sigmoid(logit);
 
-  const isOil = prob >= optimalThreshold;
-  // Calibrated decision confidence:
-  // For prob >= optimalThreshold, calibrated confidence scales smoothly in [50%, 100%]
-  // For prob < optimalThreshold, calibrated confidence scales in [50%, 100%] toward clean ocean
-  const confidence = isOil
-    ? (prob >= 0.50 ? prob : Math.max(0.52, 0.50 + 0.50 * ((prob - optimalThreshold) / (0.50 - optimalThreshold + 1e-5))))
-    : Math.max(0.52, 1 - prob);
+  // Quick physical capillary wave damping scan
+  const marineDamping = scanCapillaryWaveDamping(data, 400, 400);
+
+  // Run segmenter whenever segmenterSession is available:
+  // Spatial U-Net with multiscale ASPP provides complementary spatial attention,
+  // preventing false negatives when global pooling is diluted by coastal land or aspect ratios.
+  let segMaskRes: {
+    dataUrl: string;
+    areaPercent: number;
+    majorBBox?: CropBox;
+    spillPixels?: number;
+    hasCore?: boolean;
+    maxCompArea?: number;
+  } | null = null;
+  let segTimeMs = 0;
+
+  if (segmenterSession) {
+    const segStart = performance.now();
+    try {
+      segMaskRes = await runSegmentation(imageElement, dualPolRasters, cropBox);
+      segTimeMs = Math.round(performance.now() - segStart);
+    } catch (e) {
+      console.warn('[SAR] U-Net segmentation failed:', e);
+    }
+  }
+
+  // Consensus Decision Rules:
+  // 1. Spatial U-Net + Connected Component verification:
+  // If the segmenter detected a verified connected slick component with area >= 0.2% and >= 60 pixels with capillary damping core:
+  const uNetConfirmedSlick = !!(
+    segMaskRes &&
+    segMaskRes.areaPercent >= 0.2 &&
+    (segMaskRes.spillPixels || 0) >= 60 &&
+    (segMaskRes.hasCore || segMaskRes.areaPercent >= 0.5)
+  );
+
+  // 2. Global classifier detection:
+  const classifierConfirmed = clsProb >= optimalThreshold;
+
+  // 3. Strong physical capillary wave damping override:
+  const physicsConfirmed = marineDamping.hasProminentSlick && (segMaskRes ? segMaskRes.areaPercent > 0 : true);
+
+  let isOil = false;
+  let finalConfidence = 0.5;
+
+  if (uNetConfirmedSlick || physicsConfirmed) {
+    // Spatial U-Net or deep capillary damping proves hydrocarbon slick
+    isOil = true;
+    finalConfidence = Math.max(
+      0.88,
+      Math.min(0.99, 0.74 + (segMaskRes?.areaPercent ? (segMaskRes.areaPercent / 100) * 0.5 : 0.05) + Math.max(0, clsProb) * 0.24)
+    );
+  } else if (classifierConfirmed && segMaskRes && segMaskRes.areaPercent > 0) {
+    // Both classifier and segmenter agree on positive detection
+    isOil = true;
+    finalConfidence = Math.max(clsProb, 0.86);
+  } else if (classifierConfirmed && !segmenterSession) {
+    // Standalone classifier mode
+    isOil = true;
+    finalConfidence = clsProb;
+  } else {
+    // Both heads agree on clean ocean / no true slick
+    isOil = false;
+    finalConfidence = Math.max(0.78, 1 - clsProb);
+  }
+
   const classificationTimeMs = Math.round(performance.now() - start);
 
   const result: ExtendedClassificationResult = {
     imageFile: imageElement instanceof HTMLImageElement ? imageElement.src : 'canvas',
     prediction: isOil ? 'oil_spill' : 'no_oil',
-    confidence,
+    confidence: finalConfidence,
     inferenceTimeMs: classificationTimeMs,
     metrics: validation.metrics,
     cropInfo,
+    segmentationTimeMs: segTimeMs,
   };
 
-  // Run segmenter if classifier detects oil
   if (isOil) {
-    if (segmenterSession) {
-      const segStart = performance.now();
-      try {
-        const segMaskRes = await runSegmentation(imageElement, dualPolRasters, cropBox);
-        if (segMaskRes.dataUrl && segMaskRes.areaPercent > 0) {
-          result.segmentationMask = segMaskRes.dataUrl;
-          result.spillAreaPercent = segMaskRes.areaPercent;
-          if (segMaskRes.majorBBox) {
-            result.majorSpillBoundingBox = segMaskRes.majorBBox;
-            try {
-              result.focusedSlickDataUrl = extractCroppedImageDataUrl(
-                imageElement,
-                segMaskRes.majorBBox,
-                400
-              );
-            } catch (cropErr) {
-              console.warn('[SAR] Failed to extract focused crop:', cropErr);
-            }
-          }
-        } else {
-          // Both U-Net and physics gating found 0 true spill pixels
-          result.segmentationMask = undefined;
-          result.spillAreaPercent = 0;
-          if (prob < 0.50) {
-            // Re-calibrate classification: marginal probability with zero physical spill area
-            result.prediction = 'no_oil';
-            result.confidence = Math.max(0.75, 1 - prob);
-          }
-        }
-        result.segmentationTimeMs = Math.round(performance.now() - segStart);
-      } catch (e) {
-        console.warn('[SAR] Segmentation failed, falling back to deterministic mask:', e);
-        const fallbackMask = generateDeterministicMask(data, 400, 400, dualPolRasters);
-        if (fallbackMask.areaPercent > 0) {
-          result.segmentationMask = fallbackMask.dataUrl;
-          result.spillAreaPercent = fallbackMask.areaPercent;
+    if (segMaskRes && segMaskRes.areaPercent > 0) {
+      result.segmentationMask = segMaskRes.dataUrl;
+      result.spillAreaPercent = segMaskRes.areaPercent;
+      if (segMaskRes.majorBBox) {
+        result.majorSpillBoundingBox = segMaskRes.majorBBox;
+        try {
+          result.focusedSlickDataUrl = extractCroppedImageDataUrl(
+            imageElement,
+            segMaskRes.majorBBox,
+            400
+          );
+        } catch (cropErr) {
+          console.warn('[SAR] Failed to extract focused crop:', cropErr);
         }
       }
     } else {
-      const segStart = performance.now();
       const fallbackMask = generateDeterministicMask(data, 400, 400, dualPolRasters);
       if (fallbackMask.areaPercent > 0) {
         result.segmentationMask = fallbackMask.dataUrl;
         result.spillAreaPercent = fallbackMask.areaPercent;
       }
-      result.segmentationTimeMs = Math.round(performance.now() - segStart);
     }
   }
 
@@ -976,7 +1096,14 @@ async function runSegmentation(
   imageElement: HTMLImageElement | HTMLCanvasElement,
   dualPolRasters?: DualPolInputRasters,
   cropBox?: CropBox
-): Promise<{ dataUrl: string; areaPercent: number; majorBBox?: CropBox }> {
+): Promise<{
+  dataUrl: string;
+  areaPercent: number;
+  majorBBox?: CropBox;
+  spillPixels?: number;
+  hasCore?: boolean;
+  maxCompArea?: number;
+}> {
   if (!segmenterSession) {
     return { dataUrl: '', areaPercent: 0 };
   }
@@ -1207,6 +1334,9 @@ async function runSegmentation(
     dataUrl: maskCanvas.toDataURL(),
     areaPercent,
     majorBBox,
+    spillPixels,
+    hasCore: majorComp ? majorComp.hasCore : false,
+    maxCompArea,
   };
 }
 
