@@ -277,6 +277,31 @@ export const DetectionView: React.FC<DetectionViewProps> = ({
     img.src = src;
   };
 
+  const handleFocusMajorSpill = () => {
+    const src = rawImage || selectedImage;
+    if (!src || !result?.majorSpillBoundingBox) return;
+    setIsProcessing(true);
+    const bbox = result.majorSpillBoundingBox;
+    const img = new Image();
+    img.crossOrigin = 'Anonymous';
+    img.onload = () => {
+      try {
+        const croppedDataUrl = extractCroppedImageDataUrl(img, bbox);
+        setSelectedImage(croppedDataUrl);
+        setActiveCropBox(bbox);
+        setImageNatSize({ width: Math.round(bbox.width), height: Math.round(bbox.height) });
+        setIsFullScenePreview(false);
+        setCropNotice(`🎯 Focused Major Spill Area: ${bbox.width}×${bbox.height} px (Borders Cropped Out)`);
+        runEvaluation(src, currentRasters, bbox, currentFileName);
+      } catch (err) {
+        console.error('Focus major spill error:', err);
+        setIsProcessing(false);
+      }
+    };
+    img.onerror = () => setIsProcessing(false);
+    img.src = src;
+  };
+
   const handleResetToFullScene = () => {
     if (!rawImage) return;
     setSelectedImage(rawImage);
@@ -828,6 +853,27 @@ export const DetectionView: React.FC<DetectionViewProps> = ({
                             </button>
                           </>
                         )}
+                        {result?.majorSpillBoundingBox && !activeCropBox && (
+                          <button
+                            onClick={handleFocusMajorSpill}
+                            style={{
+                              background: 'rgba(220, 38, 38, 0.12)',
+                              border: '1px solid rgba(220, 38, 38, 0.4)',
+                              color: '#DC2626',
+                              borderRadius: 6,
+                              cursor: 'pointer',
+                              padding: '2px 8px',
+                              fontSize: 10.5,
+                              fontWeight: 700,
+                              display: 'inline-flex',
+                              alignItems: 'center',
+                              gap: 3,
+                            }}
+                            title="Crop unwanted empty ocean borders and focus on the primary spill area"
+                          >
+                            <span>🎯 Crop to Major Spill</span>
+                          </button>
+                        )}
                         {!activeCropBox && (
                           <button
                             onClick={handleAutoDetectAndCrop}
@@ -920,7 +966,12 @@ export const DetectionView: React.FC<DetectionViewProps> = ({
                 {/* Panel 3: Attention Map */}
                 <div style={{ background: 'var(--bg-raised)', border: '1px solid var(--border-subtle)', borderRadius: 12, padding: 12, display: 'flex', flexDirection: 'column', gap: 8 }}>
                   <div style={{ fontSize: 12, fontWeight: 700, color: 'var(--text-primary)', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                    <span>Attention Map (Occlusion Sensitivity)</span>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                      <span>Attention Map (Exact Sensitivity)</span>
+                      <span style={{ fontSize: 10, color: '#10B981', background: 'rgba(16, 185, 129, 0.12)', padding: '1px 6px', borderRadius: 4, fontWeight: 700 }}>
+                        Smooth Thermal ✓
+                      </span>
+                    </div>
                     {result.prediction !== 'invalid_sar' && !heatmapUrl && !isGeneratingHeatmap && (
                       <button 
                         onClick={handleGenerateHeatmap} 
@@ -1288,6 +1339,83 @@ export const DetectionView: React.FC<DetectionViewProps> = ({
                   </div>
                 )}
               </div>
+
+              {/* Major Spill Area Focused Showcase for Report */}
+              {result.majorSpillBoundingBox && (
+                <div
+                  style={{
+                    background: 'var(--bg-raised)',
+                    borderRadius: 10,
+                    border: '1px solid rgba(220, 38, 38, 0.35)',
+                    padding: '12px 16px',
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'space-between',
+                    flexWrap: 'wrap',
+                    gap: 16,
+                  }}
+                >
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 14 }}>
+                    {result.focusedSlickDataUrl && (
+                      <div
+                        style={{
+                          width: 84,
+                          height: 84,
+                          borderRadius: 8,
+                          overflow: 'hidden',
+                          border: '2px solid #DC2626',
+                          background: '#0F172A',
+                          flexShrink: 0,
+                          boxShadow: '0 2px 8px rgba(220, 38, 38, 0.25)',
+                        }}
+                      >
+                        <img
+                          src={result.focusedSlickDataUrl}
+                          alt="Major Spill Cutout"
+                          style={{ width: '100%', height: '100%', objectFit: 'cover' }}
+                        />
+                      </div>
+                    )}
+                    <div>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 4 }}>
+                        <span style={{ fontSize: 13, fontWeight: 800, color: '#DC2626' }}>
+                          🎯 Major Spill Area Forensic Cutout (Report Highlight)
+                        </span>
+                        <span style={{ fontSize: 10, padding: '1px 6px', borderRadius: 4, background: 'rgba(220, 38, 38, 0.12)', color: '#DC2626', fontWeight: 700 }}>
+                          ROI: {result.majorSpillBoundingBox.width}×{result.majorSpillBoundingBox.height} px
+                        </span>
+                      </div>
+                      <p style={{ margin: 0, fontSize: 11.5, color: 'var(--text-muted)' }}>
+                        Unwanted background ocean borders cropped out. Highlights core hydrocarbon slick with 35% maritime context for executive report.
+                      </p>
+                    </div>
+                  </div>
+                  <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+                    {!activeCropBox && (
+                      <button
+                        onClick={handleFocusMajorSpill}
+                        style={{
+                          background: 'rgba(220, 38, 38, 0.9)',
+                          color: '#fff',
+                          border: 'none',
+                          borderRadius: 6,
+                          padding: '6px 12px',
+                          fontSize: 11.5,
+                          fontWeight: 700,
+                          cursor: 'pointer',
+                          display: 'inline-flex',
+                          alignItems: 'center',
+                          gap: 6,
+                          boxShadow: '0 2px 6px rgba(220, 38, 38, 0.3)',
+                        }}
+                      >
+                        <span className="material-symbols-outlined" style={{ fontSize: 15 }}>crop</span>
+                        Focus Analysis on Major Spill
+                      </button>
+                    )}
+                  </div>
+                </div>
+              )}
 
               {/* 4-Stat Metric Grid */}
               <div

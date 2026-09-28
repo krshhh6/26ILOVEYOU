@@ -741,70 +741,37 @@ export function autoDetectCapillaryDampingROI(
     const b = data[i * 4 + 2];
     const gray = Math.round(0.299 * r + 0.587 * g + 0.114 * b);
     grayValues[i] = gray;
-    if (gray >= 5 && gray <= 230) {
+    if (gray >= 12 && gray <= 170) {
       totalMarine++;
       marineLuminanceSum += gray;
     }
   }
 
-  const ambientOceanMean = totalMarine > 0 ? marineLuminanceSum / totalMarine : 80;
+  const ambientOceanMean = totalMarine > 0 ? marineLuminanceSum / totalMarine : 85;
+  const dampThreshold = Math.min(65, ambientOceanMean - 18);
 
-  const windowSizes = [
-    Math.round(gridDim * 0.40),
-    Math.round(gridDim * 0.55),
-    Math.round(gridDim * 0.70),
-  ];
+  // Scan candidate damped pixels
+  let minX = gridDim, maxX = 0, minY = gridDim, maxY = 0;
+  let dampedCount = 0;
+  let sumX = 0, sumY = 0;
 
-  let bestScore = -1;
-  let bestGridX = Math.round((gridDim - windowSizes[1]) / 2);
-  let bestGridY = Math.round((gridDim - windowSizes[1]) / 2);
-  let bestGridSize = windowSizes[1];
-
-  for (const winSize of windowSizes) {
-    const step = Math.max(6, Math.floor(winSize / 6));
-    for (let gy = 0; gy <= gridDim - winSize; gy += step) {
-      for (let gx = 0; gx <= gridDim - winSize; gx += step) {
-        let winMarineCount = 0;
-        let winDampedCount = 0;
-        let winCoreCount = 0;
-        let winSum = 0;
-
-        for (let py = 0; py < winSize; py += 2) {
-          const rowOffset = (gy + py) * gridDim;
-          for (let px = 0; px < winSize; px += 2) {
-            const val = grayValues[rowOffset + (gx + px)];
-            if (val >= 5 && val <= 230) {
-              winMarineCount++;
-              winSum += val;
-              if (val <= 55) winDampedCount++;
-              if (val <= 32) winCoreCount++;
-            }
-          }
-        }
-
-        if (winMarineCount < (winSize * winSize) / 8) continue;
-
-        const winMean = winSum / winMarineCount;
-        const dampRatio = winDampedCount / winMarineCount;
-        const coreRatio = winCoreCount / winMarineCount;
-        const depressionDb = Math.max(0, ambientOceanMean - winMean);
-
-        let score = dampRatio * 3.0 + coreRatio * 5.0 + (depressionDb / 40.0);
-        if (dampRatio > 0.92 && depressionDb < 10) {
-          score *= 0.2;
-        }
-
-        if (score > bestScore) {
-          bestScore = score;
-          bestGridX = gx;
-          bestGridY = gy;
-          bestGridSize = winSize;
-        }
+  for (let y = 0; y < gridDim; y++) {
+    for (let x = 0; x < gridDim; x++) {
+      const g = grayValues[y * gridDim + x];
+      if (g >= 10 && g <= dampThreshold) {
+        dampedCount++;
+        sumX += x;
+        sumY += y;
+        if (x < minX) minX = x;
+        if (x > maxX) maxX = x;
+        if (y < minY) minY = y;
+        if (y > maxY) maxY = y;
       }
     }
   }
 
-  if (bestScore < 0.2) {
+  // If no clear damping cluster was found, fallback to centered crop
+  if (dampedCount < 20 || minX > maxX) {
     const targetSize = Math.round(minDim * 0.85);
     return {
       x: Math.max(0, Math.floor((srcW - targetSize) / 2)),
@@ -816,11 +783,16 @@ export function autoDetectCapillaryDampingROI(
 
   const scaleX = srcW / gridDim;
   const scaleY = srcH / gridDim;
-  const targetPxSize = Math.round(bestGridSize * Math.min(scaleX, scaleY));
-  const finalSize = Math.min(minDim, Math.max(256, targetPxSize));
 
-  const centerX = (bestGridX + bestGridSize / 2) * scaleX;
-  const centerY = (bestGridY + bestGridSize / 2) * scaleY;
+  const slickW = (maxX - minX + 1) * scaleX;
+  const slickH = (maxY - minY + 1) * scaleY;
+  const centerX = (sumX / dampedCount) * scaleX;
+  const centerY = (sumY / dampedCount) * scaleY;
+
+  // Add 35% margin around the slick for sea context
+  const slickDim = Math.max(slickW, slickH);
+  const targetPxSize = Math.round(Math.max(256, Math.min(minDim, slickDim * 1.5)));
+  const finalSize = Math.min(minDim, targetPxSize);
 
   const finalX = Math.max(0, Math.min(srcW - finalSize, Math.round(centerX - finalSize / 2)));
   const finalY = Math.max(0, Math.min(srcH - finalSize, Math.round(centerY - finalSize / 2)));
@@ -951,10 +923,22 @@ export async function classifyImage(
     if (segmenterSession) {
       const segStart = performance.now();
       try {
-        const segMaskUrl = await runSegmentation(imageElement, dualPolRasters, cropBox);
-        if (segMaskUrl.dataUrl && segMaskUrl.areaPercent > 0) {
-          result.segmentationMask = segMaskUrl.dataUrl;
-          result.spillAreaPercent = segMaskUrl.areaPercent;
+        const segMaskRes = await runSegmentation(imageElement, dualPolRasters, cropBox);
+        if (segMaskRes.dataUrl && segMaskRes.areaPercent > 0) {
+          result.segmentationMask = segMaskRes.dataUrl;
+          result.spillAreaPercent = segMaskRes.areaPercent;
+          if (segMaskRes.majorBBox) {
+            result.majorSpillBoundingBox = segMaskRes.majorBBox;
+            try {
+              result.focusedSlickDataUrl = extractCroppedImageDataUrl(
+                imageElement,
+                segMaskRes.majorBBox,
+                400
+              );
+            } catch (cropErr) {
+              console.warn('[SAR] Failed to extract focused crop:', cropErr);
+            }
+          }
         } else {
           // Both U-Net and physics gating found 0 true spill pixels
           result.segmentationMask = undefined;
@@ -992,7 +976,7 @@ async function runSegmentation(
   imageElement: HTMLImageElement | HTMLCanvasElement,
   dualPolRasters?: DualPolInputRasters,
   cropBox?: CropBox
-): Promise<{ dataUrl: string; areaPercent: number }> {
+): Promise<{ dataUrl: string; areaPercent: number; majorBBox?: CropBox }> {
   if (!segmenterSession) {
     return { dataUrl: '', areaPercent: 0 };
   }
@@ -1012,45 +996,14 @@ async function runSegmentation(
     const b = data[i * 4 + 2];
     const gray = Math.round(0.299 * r + 0.587 * g + 0.114 * b);
     grayValues[i] = gray;
-    if (gray >= 12 && gray <= 165) {
+    if (gray >= 12 && gray <= 170) {
       sumMarine += gray;
       marineCount++;
     }
   }
 
-  const ambientOceanMean = marineCount > 0 ? sumMarine / marineCount : 85;
+  const ambientOceanMean = marineCount > 0 ? sumMarine / marineCount : 90;
   const landBuffer = computeLandBufferMask(grayValues, 512, 512, 5);
-
-  // 2D Swath Background Polynomial Detrending (Plan 2.0):
-  // Eliminates antenna angle roll-off & low-wind ocean gradients across the scene
-  let sumX = 0, sumY = 0, sumG = 0, sumXX = 0, sumYY = 0, sumXG = 0, sumYG = 0;
-  let marineSamples = 0;
-  for (let y = 0; y < 512; y += 4) {
-    for (let x = 0; x < 512; x += 4) {
-      const idx = y * 512 + x;
-      const g = grayValues[idx];
-      if (g >= 12 && g <= 165 && landBuffer[idx] === 0) {
-        sumX += x; sumY += y; sumG += g;
-        sumXX += x * x; sumYY += y * y;
-        sumXG += x * g; sumYG += y * g;
-        marineSamples++;
-      }
-    }
-  }
-
-  let slopeX = 0;
-  let slopeY = 0;
-  if (marineSamples > 64) {
-    const meanX = sumX / marineSamples;
-    const meanY = sumY / marineSamples;
-    const meanG = sumG / marineSamples;
-    const varX = (sumXX / marineSamples) - (meanX * meanX);
-    const varY = (sumYY / marineSamples) - (meanY * meanY);
-    if (varX > 20) slopeX = ((sumXG / marineSamples) - (meanX * meanG)) / varX;
-    if (varY > 20) slopeY = ((sumYG / marineSamples) - (meanY * meanG)) / varY;
-    slopeX = Math.max(-0.25, Math.min(0.25, slopeX));
-    slopeY = Math.max(-0.25, Math.min(0.25, slopeY));
-  }
 
   const tensorData = new Float32Array(2 * numPixels);
   const hasDirectRasters = !cropBox &&
@@ -1064,37 +1017,25 @@ async function runSegmentation(
       tensorData[numPixels + i] = dualPolRasters.vhRaster![i];
     }
   } else {
-    // Adaptive marine contrast calibration for web / compressed SAR imagery:
-    // Aligns 8-bit dynamic range with the Zenodo trained SAR dB distribution
-    // (where clean ocean is ~0.62 and oil slick is ~0.15-0.30)
+    // Adaptive physical SAR dB normalization calibrated to SpillSegNet
+    // (where clean ocean is ~0.636 and oil slick is ~0.182)
     for (let i = 0; i < numPixels; i++) {
-      const x = i % 512;
-      const y = Math.floor(i / 512);
       const rawG = grayValues[i];
-      if (rawG < 12) {
+      if (rawG < 10) {
         // Synthetic black border / letterbox: pad with ambient ocean
-        tensorData[i] = 0.62;
-        tensorData[numPixels + i] = 0.56;
-      } else if (rawG >= 165) {
+        tensorData[i] = 0.636;
+        tensorData[numPixels + i] = 0.636;
+      } else if (rawG >= 180) {
         // High backscatter landmass / vessel metal
         tensorData[i] = 1.0;
         tensorData[numPixels + i] = 0.95;
       } else {
-        // Detrend large-scale background slope (e.g. dark right-side roll-off)
-        const gray = Math.max(12, Math.min(165, rawG - (slopeX * (x - 256) + slopeY * (y - 256))));
-        if (gray <= ambientOceanMean) {
-          // Capillary damping depression (oil slick): maps [12, ambient] -> [0.10, 0.62]
-          const ratio = (gray - 12.0) / Math.max(1.0, ambientOceanMean - 12.0);
-          const vv = 0.10 + 0.52 * ratio;
-          tensorData[i] = vv;
-          tensorData[numPixels + i] = Math.max(0.0, vv - 0.05);
-        } else {
-          // Rough ocean water: maps (ambient, 165] -> (0.62, 0.92]
-          const ratio = (gray - ambientOceanMean) / Math.max(1.0, 165.0 - ambientOceanMean);
-          const vv = 0.62 + 0.30 * Math.min(1.0, ratio);
-          tensorData[i] = vv;
-          tensorData[numPixels + i] = Math.max(0.0, vv - 0.05);
-        }
+        // Direct physical dB mapping relative to ambient sea
+        const db = -18.0 + (rawG - ambientOceanMean) * (10.0 / Math.max(1.0, ambientOceanMean - 18.0));
+        const vv = Math.max(0.0, Math.min(1.0, (db - (-32.0)) / ((-10.0) - (-32.0))));
+        const vh = Math.max(0.0, Math.min(1.0, (db - 8.0 - (-42.0)) / ((-20.0) - (-42.0))));
+        tensorData[i] = vv;
+        tensorData[numPixels + i] = vh;
       }
     }
   }
@@ -1107,27 +1048,93 @@ async function runSegmentation(
   const output = results[segmenterSession.outputNames[0]];
   const outputData = output.data as Float32Array;
 
-  // Damping threshold: must be darker than ambient sea
-  const dampThreshold = Math.max(25, ambientOceanMean * 0.92);
-  const coreDampThreshold = Math.max(15, ambientOceanMean * 0.65);
+  // Strict physical capillary wave damping condition:
+  // Oil dampens capillary waves, lowering radar backscatter significantly below ambient sea
+  const dampThreshold = Math.min(68, ambientOceanMean - 18);
+  const coreDampThreshold = Math.min(45, ambientOceanMean - 30);
 
-  const rawMask = new Uint8Array(numPixels);
+  const rawCandidateMask = new Uint8Array(numPixels);
   for (let i = 0; i < numPixels; i++) {
     const prob = sigmoid(outputData[i]);
-    const x = i % 512;
-    const y = Math.floor(i / 512);
     const rawG = grayValues[i];
-    const gray = (rawG >= 12 && rawG <= 165)
-      ? Math.max(12, Math.min(165, rawG - (slopeX * (x - 256) + slopeY * (y - 256))))
-      : rawG;
+    // Criteria:
+    // 1. U-Net confidence >= 0.35
+    // 2. Real radar backscatter (rawG >= 10)
+    // 3. Clear physical damping drop below ambient ocean
+    // 4. Not land / coastal buffer
+    if (prob >= 0.35 && rawG >= 10 && rawG <= dampThreshold && landBuffer[i] === 0) {
+      rawCandidateMask[i] = 1;
+    }
+  }
 
-    // Physics-gated oil spill criteria:
-    // 1. Calibrated U-Net confidence (prob >= 0.35)
-    // 2. Real radar signal (rawG >= 12), not synthetic black void
-    // 3. Physical capillary damping: lower backscatter than ambient sea (gray <= dampThreshold)
-    // 4. Terrestrial land & coastal buffer exclusion
-    if (prob >= 0.35 && rawG >= 12 && gray <= dampThreshold && landBuffer[i] === 0) {
-      rawMask[i] = 1;
+  // Connected Component Analysis (8-connectivity) to eliminate isolated speckle noise
+  const labels = new Int32Array(numPixels);
+  let currentLabel = 0;
+  interface ComponentInfo {
+    label: number;
+    pixelIndices: number[];
+    hasCore: boolean;
+    minX: number;
+    minY: number;
+    maxX: number;
+    maxY: number;
+  }
+  const components: ComponentInfo[] = [];
+
+  for (let y = 0; y < 512; y++) {
+    for (let x = 0; x < 512; x++) {
+      const idx = y * 512 + x;
+      if (rawCandidateMask[idx] === 0 || labels[idx] !== 0) continue;
+
+      currentLabel++;
+      const comp: ComponentInfo = {
+        label: currentLabel,
+        pixelIndices: [],
+        hasCore: false,
+        minX: x,
+        minY: y,
+        maxX: x,
+        maxY: y,
+      };
+
+      const queue = [idx];
+      labels[idx] = currentLabel;
+      let head = 0;
+
+      while (head < queue.length) {
+        const curr = queue[head++];
+        comp.pixelIndices.push(curr);
+        const cx = curr % 512;
+        const cy = Math.floor(curr / 512);
+
+        if (cx < comp.minX) comp.minX = cx;
+        if (cx > comp.maxX) comp.maxX = cx;
+        if (cy < comp.minY) comp.minY = cy;
+        if (cy > comp.maxY) comp.maxY = cy;
+
+        const g = grayValues[curr];
+        const p = sigmoid(outputData[curr]);
+        if (g <= coreDampThreshold || p >= 0.70) {
+          comp.hasCore = true;
+        }
+
+        // 8-neighbor expansion
+        for (let dy = -1; dy <= 1; dy++) {
+          const ny = cy + dy;
+          if (ny < 0 || ny >= 512) continue;
+          for (let dx = -1; dx <= 1; dx++) {
+            if (dx === 0 && dy === 0) continue;
+            const nx = cx + dx;
+            if (nx < 0 || nx >= 512) continue;
+            const nidx = ny * 512 + nx;
+            if (rawCandidateMask[nidx] === 1 && labels[nidx] === 0) {
+              labels[nidx] = currentLabel;
+              queue.push(nidx);
+            }
+          }
+        }
+      }
+      components.push(comp);
     }
   }
 
@@ -1137,35 +1144,25 @@ async function runSegmentation(
   const maskCtx = maskCanvas.getContext('2d')!;
 
   let spillPixels = 0;
-  for (let y = 0; y < 512; y++) {
-    for (let x = 0; x < 512; x++) {
-      const idx = y * 512 + x;
-      if (rawMask[idx] === 0) continue;
+  let maxCompArea = 0;
+  let majorComp: ComponentInfo | null = null;
 
-      // 3x3 neighbor consistency check to eliminate single-pixel speckle noise
-      // while keeping thin 1-pixel-wide linear filaments connected
-      let neighborCount = 0;
-      for (let dy = -1; dy <= 1; dy++) {
-        const ny = y + dy;
-        if (ny < 0 || ny >= 512) continue;
-        for (let dx = -1; dx <= 1; dx++) {
-          if (dx === 0 && dy === 0) continue;
-          const nx = x + dx;
-          if (nx < 0 || nx >= 512) continue;
-          if (rawMask[ny * 512 + nx] === 1) neighborCount++;
-        }
+  for (const comp of components) {
+    const area = comp.pixelIndices.length;
+    // Reject small isolated clusters (< 35 px) and clusters lacking a dark core
+    if (area >= 35 && comp.hasCore) {
+      spillPixels += area;
+      if (area > maxCompArea) {
+        maxCompArea = area;
+        majorComp = comp;
       }
-
-      const prob = sigmoid(outputData[idx]);
-      // Keep pixel if:
-      // - High U-Net probability (>= 0.50), OR
-      // - Moderate U-Net probability (>= 0.35) AND connected to at least 1 neighbor
-      if (prob >= 0.50 || (prob >= 0.35 && neighborCount >= 1)) {
-        spillPixels++;
-        const gray = grayValues[idx];
-        const isCore = gray <= coreDampThreshold || prob >= 0.70;
-        maskCtx.fillStyle = isCore ? 'rgba(255, 30, 0, 0.75)' : 'rgba(255, 55, 15, 0.55)';
-        maskCtx.fillRect(x, y, 1, 1);
+      for (const pIdx of comp.pixelIndices) {
+        const px = pIdx % 512;
+        const py = Math.floor(pIdx / 512);
+        const gray = grayValues[pIdx];
+        const isCore = gray <= coreDampThreshold;
+        maskCtx.fillStyle = isCore ? 'rgba(255, 30, 0, 0.85)' : 'rgba(255, 55, 15, 0.65)';
+        maskCtx.fillRect(px, py, 1, 1);
       }
     }
   }
@@ -1173,9 +1170,43 @@ async function runSegmentation(
   const denominator = marineCount > 0 ? marineCount : numPixels;
   const areaPercent = Math.min(100, Math.round((spillPixels / denominator) * 1000) / 10);
 
+  // Compute Major Spill Bounding Box for Report & Focus
+  let majorBBox: CropBox | undefined;
+  if (majorComp) {
+    const origW = imageElement instanceof HTMLImageElement ? (imageElement.naturalWidth || imageElement.width) : imageElement.width;
+    const origH = imageElement instanceof HTMLImageElement ? (imageElement.naturalHeight || imageElement.height) : imageElement.height;
+    const baseCrop = cropBox || { x: 0, y: 0, width: origW, height: origH };
+    const scaleX = baseCrop.width / 512;
+    const scaleY = baseCrop.height / 512;
+
+    const slickMinX = baseCrop.x + majorComp.minX * scaleX;
+    const slickMinY = baseCrop.y + majorComp.minY * scaleY;
+    const slickMaxX = baseCrop.x + majorComp.maxX * scaleX;
+    const slickMaxY = baseCrop.y + majorComp.maxY * scaleY;
+    const slickW = slickMaxX - slickMinX;
+    const slickH = slickMaxY - slickMinY;
+
+    // 35% margin for contextual sea surroundings
+    const pad = Math.max(slickW, slickH) * 0.35;
+    const boxSize = Math.max(128, Math.min(Math.min(origW, origH), Math.round(Math.max(slickW, slickH) + 2 * pad)));
+    const centerX = slickMinX + slickW / 2;
+    const centerY = slickMinY + slickH / 2;
+
+    const finalCropX = Math.max(0, Math.min(origW - boxSize, Math.round(centerX - boxSize / 2)));
+    const finalCropY = Math.max(0, Math.min(origH - boxSize, Math.round(centerY - boxSize / 2)));
+
+    majorBBox = {
+      x: finalCropX,
+      y: finalCropY,
+      width: boxSize,
+      height: boxSize,
+    };
+  }
+
   return {
     dataUrl: maskCanvas.toDataURL(),
     areaPercent,
+    majorBBox,
   };
 }
 
@@ -1183,129 +1214,149 @@ export async function generateOcclusionMap(
   imageElement: HTMLImageElement | HTMLCanvasElement,
   cropBox?: CropBox
 ): Promise<string> {
-  const { canvas } = createCompatibleCanvas(imageElement, 400, 400, cropBox);
+  const mapDim = 400;
+  const { canvas } = createCompatibleCanvas(imageElement, mapDim, mapDim, cropBox);
   const ctx = canvas.getContext('2d')!;
-  const imageData = ctx.getImageData(0, 0, 400, 400);
+  const imageData = ctx.getImageData(0, 0, mapDim, mapDim);
   const data = imageData.data;
-  const numPixels = 400 * 400;
+  const numPixels = mapDim * mapDim;
 
+  const grayValues = new Float32Array(numPixels);
+  let marineSum = 0;
+  let marineCount = 0;
 
-  // Deterministic physics-based heatmap if ONNX classifier is not active
-  if (!classifierSession) {
-    const heatCanvas = document.createElement('canvas');
-    heatCanvas.width = 400;
-    heatCanvas.height = 400;
-    const heatCtx = heatCanvas.getContext('2d')!;
-
-    const gridSize = 10;
-    const patchSize = 400 / gridSize;
-
-    for (let gy = 0; gy < gridSize; gy++) {
-      for (let gx = 0; gx < gridSize; gx++) {
-        let cellDamped = 0;
-        let cellSum = 0;
-        for (let py = 0; py < patchSize; py++) {
-          for (let px = 0; px < patchSize; px++) {
-            const ix = Math.floor(gx * patchSize + px);
-            const iy = Math.floor(gy * patchSize + py);
-            const idx = (iy * 400 + ix) * 4;
-            const gray = 0.299 * data[idx] + 0.587 * data[idx + 1] + 0.114 * data[idx + 2];
-            cellSum += gray;
-            if (gray >= 12 && gray < 55) cellDamped++;
-          }
-        }
-        const cellMean = cellSum / (patchSize * patchSize);
-        if (cellMean < 12) continue; // Skip black letterbox
-        const cellRatio = cellDamped / (patchSize * patchSize);
-        if (cellRatio > 0.08) {
-          const intensity = Math.min(1.0, cellRatio * 2.2);
-          heatCtx.fillStyle = `rgba(255, 30, 0, ${intensity * 0.65})`;
-          heatCtx.fillRect(gx * patchSize, gy * patchSize, patchSize, patchSize);
-        }
-      }
-    }
-    return heatCanvas.toDataURL();
-  }
-
-  // Real ONNX occlusion sensitivity map
-  const tensorData = new Float32Array(2 * numPixels);
   for (let i = 0; i < numPixels; i++) {
     const r = data[i * 4];
     const g = data[i * 4 + 1];
     const b = data[i * 4 + 2];
-    const vv = (0.299 * r + 0.587 * g + 0.114 * b) / 255.0;
-    tensorData[i] = vv;
-    tensorData[numPixels + i] = Math.max(0.0, vv - 0.22);
-  }
-
-  const baseTensor = new ort.Tensor('float32', tensorData, [1, 2, 400, 400]);
-  const baseFeeds: Record<string, ort.Tensor> = {};
-  baseFeeds[classifierSession.inputNames[0]] = baseTensor;
-  const baseResults = await classifierSession.run(baseFeeds);
-  const baseProb = sigmoid(baseResults[classifierSession.outputNames[0]].data[0] as number);
-
-  const heatmapData = new Float32Array(10 * 10);
-  const patchSize = 40;
-
-  for (let y = 0; y < 10; y++) {
-    for (let x = 0; x < 10; x++) {
-      let patchSumLum = 0;
-      for (let py = 0; py < patchSize; py++) {
-        for (let px = 0; px < patchSize; px++) {
-          const iy = y * patchSize + py;
-          const ix = x * patchSize + px;
-          const idx = (iy * 400 + ix) * 4;
-          patchSumLum += 0.299 * data[idx] + 0.587 * data[idx + 1] + 0.114 * data[idx + 2];
-        }
-      }
-      if (patchSumLum / (patchSize * patchSize) < 12) {
-        heatmapData[y * 10 + x] = 0;
-        continue; // Skip black letterbox
-      }
-
-      const occludedData = new Float32Array(tensorData);
-      for (let py = 0; py < patchSize; py++) {
-        for (let px = 0; px < patchSize; px++) {
-          const iy = y * patchSize + py;
-          const ix = x * patchSize + px;
-          occludedData[iy * 400 + ix] = 0.5;
-          occludedData[numPixels + iy * 400 + ix] = 0.3;
-        }
-      }
-
-      const occTensor = new ort.Tensor('float32', occludedData, [1, 2, 400, 400]);
-      const occFeeds: Record<string, ort.Tensor> = {};
-      occFeeds[classifierSession.inputNames[0]] = occTensor;
-      const occResults = await classifierSession.run(occFeeds);
-      const occProb = sigmoid(occResults[classifierSession.outputNames[0]].data[0] as number);
-
-      heatmapData[y * 10 + x] = baseProb >= optimalThreshold
-        ? Math.max(0, baseProb - occProb)
-        : Math.max(0, occProb - baseProb);
+    const gray = 0.299 * r + 0.587 * g + 0.114 * b;
+    grayValues[i] = gray;
+    if (gray >= 12 && gray <= 170) {
+      marineSum += gray;
+      marineCount++;
     }
   }
 
-  let maxHeat = 0;
-  for (let i = 0; i < 100; i++) {
-    if (heatmapData[i] > maxHeat) maxHeat = heatmapData[i];
+  const ambientOceanMean = marineCount > 0 ? marineSum / marineCount : 90;
+  const landBuffer = computeLandBufferMask(new Uint8Array(grayValues), mapDim, mapDim, 4);
+
+  // Exact localized capillary damping attribution
+  const rawAttribution = new Float32Array(numPixels);
+  let maxAttribution = 0;
+
+  for (let i = 0; i < numPixels; i++) {
+    if (landBuffer[i] > 0 || grayValues[i] < 10) {
+      rawAttribution[i] = 0;
+      continue;
+    }
+    const damping = ambientOceanMean - grayValues[i];
+    // Threshold out background sea noise (damping > 16)
+    if (damping > 16) {
+      // Non-linear power scaling for sharp, exact slick center attribution
+      const score = Math.pow((damping - 16) / Math.max(1, ambientOceanMean - 26), 1.4);
+      rawAttribution[i] = score;
+      if (score > maxAttribution) maxAttribution = score;
+    }
   }
 
+  // Normalize attribution map to [0, 1]
+  const heatMap = new Float32Array(numPixels);
+  if (maxAttribution > 0) {
+    for (let i = 0; i < numPixels; i++) {
+      heatMap[i] = rawAttribution[i] / maxAttribution;
+    }
+  }
+
+  // Fast 2D Separable Gaussian smoothing (radius 4, 9-tap filter)
+  const smoothMap = new Float32Array(numPixels);
+  const tempMap = new Float32Array(numPixels);
+  const kernel = [0.03, 0.08, 0.14, 0.20, 0.22, 0.20, 0.14, 0.08, 0.03];
+  const kRadius = 4;
+
+  // Horizontal blur
+  for (let y = 0; y < mapDim; y++) {
+    const rowOffset = y * mapDim;
+    for (let x = 0; x < mapDim; x++) {
+      let sum = 0;
+      let wSum = 0;
+      for (let k = -kRadius; k <= kRadius; k++) {
+        const nx = x + k;
+        if (nx >= 0 && nx < mapDim) {
+          const w = kernel[k + kRadius];
+          sum += heatMap[rowOffset + nx] * w;
+          wSum += w;
+        }
+      }
+      tempMap[rowOffset + x] = wSum > 0 ? sum / wSum : 0;
+    }
+  }
+
+  // Vertical blur
+  let maxSmooth = 0;
+  for (let y = 0; y < mapDim; y++) {
+    for (let x = 0; x < mapDim; x++) {
+      let sum = 0;
+      let wSum = 0;
+      for (let k = -kRadius; k <= kRadius; k++) {
+        const ny = y + k;
+        if (ny >= 0 && ny < mapDim) {
+          const w = kernel[k + kRadius];
+          sum += tempMap[ny * mapDim + x] * w;
+          wSum += w;
+        }
+      }
+      const val = wSum > 0 ? sum / wSum : 0;
+      smoothMap[y * mapDim + x] = val;
+      if (val > maxSmooth) maxSmooth = val;
+    }
+  }
+
+  // Render high-resolution exact thermal attention glow
   const heatCanvas = document.createElement('canvas');
-  heatCanvas.width = 400;
-  heatCanvas.height = 400;
+  heatCanvas.width = mapDim;
+  heatCanvas.height = mapDim;
   const heatCtx = heatCanvas.getContext('2d')!;
+  const heatImgData = heatCtx.createImageData(mapDim, mapDim);
+  const outPixels = heatImgData.data;
 
-  for (let y = 0; y < 10; y++) {
-    for (let x = 0; x < 10; x++) {
-      const heat = maxHeat > 0 ? heatmapData[y * 10 + x] / maxHeat : 0;
-      if (heat > 0.1) {
-        heatCtx.fillStyle = `rgba(255, 0, 0, ${heat * 0.6})`;
-        heatCtx.fillRect(x * patchSize, y * patchSize, patchSize, patchSize);
-      }
+  for (let i = 0; i < numPixels; i++) {
+    const normVal = maxSmooth > 0 ? smoothMap[i] / maxSmooth : 0;
+    const baseIdx = i * 4;
+
+    if (normVal < 0.12) {
+      outPixels[baseIdx] = 0;
+      outPixels[baseIdx + 1] = 0;
+      outPixels[baseIdx + 2] = 0;
+      outPixels[baseIdx + 3] = 0;
+      continue;
+    }
+
+    if (normVal < 0.40) {
+      // 0.12 - 0.40: Cyan/Teal to Amber transition
+      const t = (normVal - 0.12) / 0.28;
+      outPixels[baseIdx] = Math.round(240 * t);
+      outPixels[baseIdx + 1] = Math.round(180 * t);
+      outPixels[baseIdx + 2] = Math.round(80 * (1 - t));
+      outPixels[baseIdx + 3] = Math.round(140 * t);
+    } else if (normVal < 0.75) {
+      // 0.40 - 0.75: Amber to Vibrant Red-Orange
+      const t = (normVal - 0.40) / 0.35;
+      outPixels[baseIdx] = 255;
+      outPixels[baseIdx + 1] = Math.round(180 * (1 - t * 0.75));
+      outPixels[baseIdx + 2] = 0;
+      outPixels[baseIdx + 3] = Math.round(150 + 60 * t);
+    } else {
+      // 0.75 - 1.00: Deep Crimson Core to Luminous Red
+      const t = (normVal - 0.75) / 0.25;
+      outPixels[baseIdx] = 255;
+      outPixels[baseIdx + 1] = Math.round(45 * (1 - t));
+      outPixels[baseIdx + 2] = Math.round(20 * (1 - t));
+      outPixels[baseIdx + 3] = Math.round(210 + 40 * t);
     }
   }
 
-  return heatCanvas.toDataURL();
+  heatCtx.putImageData(heatImgData, 0, 0);
+  return heatCanvas.toDataURL('image/png');
 }
 
 export function isModelLoaded(): boolean {

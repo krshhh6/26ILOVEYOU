@@ -128,6 +128,8 @@ export interface SarClassificationResult {
     sharpTransitions: number;
     isColor: boolean;
   };
+  majorSpillBoundingBox?: CropBox;
+  focusedSlickDataUrl?: string;
 }
 
 export interface SarDriftPayload {
