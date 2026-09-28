@@ -83,8 +83,26 @@ export async function decodeTiffFile(file: File | Blob): Promise<DecodedTiffResu
     return srcY * originalWidth + srcX;
   };
 
-  // Case 1: Dual-polarization Sentinel-1 SAR (Band 0 = VH, Band 1 = VV in dB)
-  if (rasters.length >= 2) {
+  // Case 1: RGB / Multi-spectral TIFF (must check first: >= 3 bands)
+  if (rasters.length >= 3 && samplesPerPixel >= 3) {
+    formatDescription = `RGB Multi-Band TIFF (${originalWidth}x${originalHeight})`;
+    const rRaster = (rasters[0] as unknown) as ArrayLike<number>;
+    const gRaster = (rasters[1] as unknown) as ArrayLike<number>;
+    const bRaster = (rasters[2] as unknown) as ArrayLike<number>;
+
+    for (let y = 0; y < targetHeight; y++) {
+      for (let x = 0; x < targetWidth; x++) {
+        const dstIdx = y * targetWidth + x;
+        const srcIdx = getSrcIndex(x, y);
+        const pixelIdx = dstIdx * 4;
+        imgData.data[pixelIdx]     = Math.min(255, Math.max(0, Math.round(rRaster[srcIdx])));
+        imgData.data[pixelIdx + 1] = Math.min(255, Math.max(0, Math.round(gRaster[srcIdx])));
+        imgData.data[pixelIdx + 2] = Math.min(255, Math.max(0, Math.round(bRaster[srcIdx])));
+        imgData.data[pixelIdx + 3] = 255;
+      }
+    }
+  // Case 2: Dual-polarization Sentinel-1 SAR (exactly 2 bands: Band 0 = VH, Band 1 = VV in dB)
+  } else if (rasters.length === 2) {
     // Verified: Band 1 = VV (co-pol), Band 0 = VH (cross-pol)
     const vhRaster = (rasters[0] as unknown) as ArrayLike<number>;
     const vvRaster = (rasters[1] as unknown) as ArrayLike<number>;
@@ -93,13 +111,37 @@ export async function decodeTiffFile(file: File | Blob): Promise<DecodedTiffResu
     vvNormBuffer = new Float32Array(totalPixels);
     vhNormBuffer = new Float32Array(totalPixels);
 
-    // Calibrated physical SAR dB normalization
-    // VV bounds: [-32.0 dB, -10.0 dB]
-    // VH bounds: [-42.0 dB, -20.0 dB]
-    const vvMin = -32.0;
-    const vvMax = -10.0;
-    const vhMin = -42.0;
-    const vhMax = -20.0;
+    // Sample range to check scale (dB float vs linear uint16/DN)
+    const samples: number[] = [];
+    const stride = Math.max(1, Math.floor(vvRaster.length / 5000));
+    for (let i = 0; i < vvRaster.length; i += stride) {
+      const v = vvRaster[i];
+      if (Number.isFinite(v)) {
+        samples.push(v);
+      }
+    }
+    samples.sort((a, b) => a - b);
+
+    const minSample = samples.length > 0 ? samples[0] : 0;
+    const isDbScale = minSample < -5.0;
+
+    let vvMin = -32.0;
+    let vvMax = -10.0;
+    let vhMin = -42.0;
+    let vhMax = -20.0;
+
+    if (!isDbScale && samples.length > 0) {
+      // Robust 2nd and 98th percentile scaling for linear DN rasters (more robust than p1/p99)
+      const p2Idx = Math.floor(samples.length * 0.02);
+      const p98Idx = Math.min(samples.length - 1, Math.floor(samples.length * 0.98));
+      vvMin = samples[p2Idx];
+      vvMax = Math.max(vvMin + 1, samples[p98Idx]);
+      vhMin = vvMin;
+      vhMax = vvMax;
+    }
+
+    const vvRange = vvMax - vvMin || 1;
+    const vhRange = vhMax - vhMin || 1;
 
     for (let y = 0; y < targetHeight; y++) {
       for (let x = 0; x < targetWidth; x++) {
@@ -112,21 +154,21 @@ export async function decodeTiffFile(file: File | Blob): Promise<DecodedTiffResu
         let n_vv = 0;
         if (Number.isFinite(v_vv)) {
           const clipped = Math.max(vvMin, Math.min(vvMax, v_vv));
-          n_vv = (clipped - vvMin) / (vvMax - vvMin);
+          n_vv = (clipped - vvMin) / vvRange;
         }
         vvNormBuffer[dstIdx] = n_vv;
 
         let n_vh = 0;
         if (Number.isFinite(v_vh)) {
           const clipped = Math.max(vhMin, Math.min(vhMax, v_vh));
-          n_vh = (clipped - vhMin) / (vhMax - vhMin);
+          n_vh = (clipped - vhMin) / vhRange;
         }
         vhNormBuffer[dstIdx] = n_vh;
 
         // Draw VV to visual canvas
         const gray = Math.round(n_vv * 255);
         const pixelIdx = dstIdx * 4;
-        imgData.data[pixelIdx] = gray;
+        imgData.data[pixelIdx]     = gray;
         imgData.data[pixelIdx + 1] = gray;
         imgData.data[pixelIdx + 2] = gray;
         imgData.data[pixelIdx + 3] = 255;
@@ -141,20 +183,27 @@ export async function decodeTiffFile(file: File | Blob): Promise<DecodedTiffResu
     vhNormBuffer = new Float32Array(totalPixels);
 
     // Sample range to check scale
-    let minVal = Infinity;
-    let maxVal = -Infinity;
+    const samples: number[] = [];
     const stride = Math.max(1, Math.floor(singleRaster.length / 5000));
     for (let i = 0; i < singleRaster.length; i += stride) {
       const v = singleRaster[i];
       if (Number.isFinite(v)) {
-        if (v < minVal) minVal = v;
-        if (v > maxVal) maxVal = v;
+        samples.push(v);
       }
     }
+    samples.sort((a, b) => a - b);
 
-    const isDbScale = minVal < -5.0;
-    const lowBound = isDbScale ? -32.0 : minVal;
-    const highBound = isDbScale ? -10.0 : (maxVal || 1);
+    const minSample = samples.length > 0 ? samples[0] : 0;
+    const isDbScale = minSample < -5.0;
+
+    let lowBound = -32.0;
+    let highBound = -10.0;
+    if (!isDbScale && samples.length > 0) {
+      const p1Idx = Math.floor(samples.length * 0.01);
+      const p99Idx = Math.min(samples.length - 1, Math.floor(samples.length * 0.99));
+      lowBound = samples[p1Idx];
+      highBound = Math.max(lowBound + 1, samples[p99Idx]);
+    }
     const range = highBound - lowBound || 1;
 
     for (let y = 0; y < targetHeight; y++) {
@@ -169,31 +218,13 @@ export async function decodeTiffFile(file: File | Blob): Promise<DecodedTiffResu
           norm = (clipped - lowBound) / range;
         }
         vvNormBuffer[dstIdx] = norm;
-        vhNormBuffer[dstIdx] = Math.max(0, norm - 0.22);
+        vhNormBuffer[dstIdx] = Math.max(0, norm - 0.06);
 
         const gray = Math.round(norm * 255);
         const pixelIdx = dstIdx * 4;
         imgData.data[pixelIdx] = gray;
         imgData.data[pixelIdx + 1] = gray;
         imgData.data[pixelIdx + 2] = gray;
-        imgData.data[pixelIdx + 3] = 255;
-      }
-    }
-  } else if (rasters.length >= 3) {
-    // Case 3: RGB / Multi-spectral TIFF
-    formatDescription = `RGB Multi-Band TIFF (${originalWidth}x${originalHeight})`;
-    const rRaster = (rasters[0] as unknown) as ArrayLike<number>;
-    const gRaster = (rasters[1] as unknown) as ArrayLike<number>;
-    const bRaster = (rasters[2] as unknown) as ArrayLike<number>;
-
-    for (let y = 0; y < targetHeight; y++) {
-      for (let x = 0; x < targetWidth; x++) {
-        const dstIdx = y * targetWidth + x;
-        const srcIdx = getSrcIndex(x, y);
-        const pixelIdx = dstIdx * 4;
-        imgData.data[pixelIdx] = Math.min(255, Math.max(0, rRaster[srcIdx]));
-        imgData.data[pixelIdx + 1] = Math.min(255, Math.max(0, gRaster[srcIdx]));
-        imgData.data[pixelIdx + 2] = Math.min(255, Math.max(0, bRaster[srcIdx]));
         imgData.data[pixelIdx + 3] = 255;
       }
     }
