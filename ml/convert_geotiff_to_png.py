@@ -110,7 +110,7 @@ def convert_single_tiff(
 
 def main():
     parser = argparse.ArgumentParser(description="Convert SAR GeoTIFF (.tif) to web-standard PNG/JPG or model-compatible 1:1 crop")
-    parser.add_argument("--input", type=str, default=r"D:\01_Train_Val_Oil_Spill_images\Oil\00000.tif", help="Path to input .tif")
+    parser.add_argument("--input", type=str, default=r"D:\SIH 26143-Oil_Spill\01_Train_Val_Oil_Spill_images\Oil\00000.tif", help="Path to input .tif")
     parser.add_argument("--output", type=str, default="frontend/public/imagery/custom_sar.png", help="Path to output PNG")
     parser.add_argument("--size", type=int, default=800, help="Resize dimension (default 800px)")
     parser.add_argument("--patch-size", type=int, default=400, help="Model patch size (default 400 for DualPolOilSpillNet)")
@@ -123,7 +123,7 @@ def main():
     crop_roi = tuple(args.crop) if args.crop else None
 
     if args.batch > 0:
-        source_dir = Path(r"D:\01_Train_Val_Oil_Spill_images\Oil")
+        source_dir = Path(r"D:\SIH 26143-Oil_Spill\01_Train_Val_Oil_Spill_images\Oil")
         if not source_dir.exists():
             print(f"Dataset directory not found: {source_dir}")
             return

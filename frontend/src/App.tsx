@@ -20,8 +20,10 @@ import {
 } from './services/maritimeSearchService';
 import { MobileNav } from './components/MobileNav';
 import { MobileDrawer } from './components/MobileDrawer';
+import { OpeningScreen } from './components/OpeningScreen';
 
 export const App: React.FC = () => {
+  const [showOpeningScreen, setShowOpeningScreen] = useState<boolean>(true);
   const [activeTab, setActiveTab] = useState<TabType>('dashboard');
   const [currentScenarioKey, setCurrentScenarioKey] = useState<string>('');
   const [theme, setTheme] = useState<'light' | 'dark'>('light');
@@ -213,12 +215,22 @@ export const App: React.FC = () => {
       }
     };
 
+    const handleReplayIntro = () => setShowOpeningScreen(true);
+    window.addEventListener('spill-sense:replay-intro', handleReplayIntro);
+
     window.addEventListener('keydown', handleKeyDown);
-    return () => window.removeEventListener('keydown', handleKeyDown);
+    return () => {
+      window.removeEventListener('keydown', handleKeyDown);
+      window.removeEventListener('spill-sense:replay-intro', handleReplayIntro);
+    };
   }, []);
 
   return (
-    <div className="app-shell">
+    <>
+      {showOpeningScreen && (
+        <OpeningScreen onComplete={() => setShowOpeningScreen(false)} />
+      )}
+      <div className="app-shell">
       {/* PRIMARY NAVIGATION DRAWER */}
       <Sidebar
         activeTab={activeTab}
@@ -361,6 +373,7 @@ export const App: React.FC = () => {
         incidents={allIncidents}
       />
     </div>
+    </>
   );
 };
 

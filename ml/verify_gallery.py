@@ -7,7 +7,10 @@ from ml.config import CONFIG
 from ml.models import get_classifier
 
 # Load fine-tuned model
-ckpt = torch.load(CONFIG.checkpoint_dir / 'best_classifier_v3.pt', map_location='cpu', weights_only=False)
+ckpt_file = CONFIG.checkpoint_dir / 'best_classifier_v3_finetuned.pt'
+if not ckpt_file.exists():
+    ckpt_file = CONFIG.checkpoint_dir / 'best_classifier_v3.pt'
+ckpt = torch.load(ckpt_file, map_location='cpu', weights_only=False)
 model = get_classifier(2)
 model.load_state_dict(ckpt['model_state'])
 model.eval()

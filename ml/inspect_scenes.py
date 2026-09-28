@@ -3,11 +3,11 @@ import tifffile
 import numpy as np
 
 sample_files = [
-    r"D:\01_Train_Val_Oil_Spill_images\Oil\00000.tif",
-    r"D:\01_Train_Val_Oil_Spill_images\Oil\00005.tif",
-    r"D:\01_Train_Val_Oil_Spill_images\Oil\00010.tif",
-    r"D:\01_Train_Val_Oil_Spill_images\Oil\00020.tif",
-    r"D:\01_Train_Val_Oil_Spill_images\Oil\00050.tif",
+    r"D:\SIH 26143-Oil_Spill\01_Train_Val_Oil_Spill_images\Oil\00000.tif",
+    r"D:\SIH 26143-Oil_Spill\01_Train_Val_Oil_Spill_images\Oil\00005.tif",
+    r"D:\SIH 26143-Oil_Spill\01_Train_Val_Oil_Spill_images\Oil\00010.tif",
+    r"D:\SIH 26143-Oil_Spill\01_Train_Val_Oil_Spill_images\Oil\00020.tif",
+    r"D:\SIH 26143-Oil_Spill\01_Train_Val_Oil_Spill_images\Oil\00050.tif",
 ]
 
 for f in sample_files:

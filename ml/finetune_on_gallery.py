@@ -616,7 +616,7 @@ def regenerate_demo_images(
                 logit = model(inp).squeeze().cpu().item()
             prob = 1.0 / (1.0 + np.exp(-np.clip(logit, -20, 20)))
             decision = "OIL" if prob >= threshold else "CLEAN"
-            print(f"  class_1_{oil_idx:02d}.jpg: P={prob:.3f} → {decision}")
+            print(f"  class_1_{oil_idx:02d}.jpg: P={prob:.3f} -> {decision}")
             
         except Exception as e:
             print(f"  [SKIP] Oil scene error: {e}")
@@ -661,7 +661,7 @@ def regenerate_demo_images(
                 logit = model(inp).squeeze().cpu().item()
             prob = 1.0 / (1.0 + np.exp(-np.clip(logit, -20, 20)))
             decision = "OIL" if prob >= threshold else "CLEAN"
-            print(f"  class_0_{clean_idx:02d}.jpg: P={prob:.3f} → {decision}")
+            print(f"  class_0_{clean_idx:02d}.jpg: P={prob:.3f} -> {decision}")
             
         except Exception as e:
             print(f"  [SKIP] Clean scene error: {e}")
