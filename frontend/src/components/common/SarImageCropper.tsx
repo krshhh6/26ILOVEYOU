@@ -305,7 +305,7 @@ export const SarImageCropper: React.FC<SarImageCropperProps> = ({
   const handleApply = () => {
     if (!imageRef.current) return;
     try {
-      const croppedDataUrl = extractCroppedImageDataUrl(imageRef.current, cropBox, 800);
+      const croppedDataUrl = extractCroppedImageDataUrl(imageRef.current, cropBox);
       onApplyCrop(croppedDataUrl, cropBox, isAutoDetected);
     } catch (err) {
       console.error('Failed to extract crop:', err);
@@ -567,6 +567,23 @@ export const SarImageCropper: React.FC<SarImageCropperProps> = ({
                 width: displayDimensions.width,
                 height: displayDimensions.height,
                 boxShadow: '0 0 20px rgba(0,0,0,0.5)',
+                cursor: 'crosshair',
+              }}
+              onPointerDown={(e) => {
+                if (!imageDimensions || scale <= 0) return;
+                const rect = e.currentTarget.getBoundingClientRect();
+                const clickDispX = e.clientX - rect.left;
+                const clickDispY = e.clientY - rect.top;
+                const clickImgX = clickDispX / scale;
+                const clickImgY = clickDispY / scale;
+
+                // Center cropBox on clicked point
+                const maxW = imageDimensions.width;
+                const maxH = imageDimensions.height;
+                const newX = Math.max(0, Math.min(maxW - cropBox.width, Math.round(clickImgX - cropBox.width / 2)));
+                const newY = Math.max(0, Math.min(maxH - cropBox.height, Math.round(clickImgY - cropBox.height / 2)));
+                setCropBox((prev) => ({ ...prev, x: newX, y: newY }));
+                setIsAutoDetected(false);
               }}
             >
               {/* Background Image */}
