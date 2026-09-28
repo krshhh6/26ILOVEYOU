@@ -45,6 +45,40 @@ services:
     volumes:
       - minio_data:/data
 
+  # FastAPI Core Intelligence & C2 API
+  backend:
+    build:
+      context: ../backend
+      dockerfile: Dockerfile
+    container_name: spill_sense_backend
+    restart: unless-stopped
+    ports:
+      - "8000:8000"
+    environment:
+      PORT: 8000
+      DATABASE_URL: postgresql+asyncpg://spill_user:spill_pass_26143@postgis:5432/spill_sense
+      REDIS_URL: redis://redis:6379/0
+      AISSTREAM_API_KEY: ${AISSTREAM_API_KEY:-47c9a557f534c95dcc5a3912e4328cebafb3d861}
+    depends_on:
+      postgis:
+        condition: service_healthy
+      redis:
+        condition: service_started
+    volumes:
+      - ../backend:/app
+
+  # Vite + React Command & Control Frontend Dashboard (Nginx)
+  frontend:
+    build:
+      context: ../frontend
+      dockerfile: Dockerfile
+    container_name: spill_sense_frontend
+    restart: unless-stopped
+    ports:
+      - "80:80"
+    depends_on:
+      - backend
+
 volumes:
   postgis_data:
   redis_data:

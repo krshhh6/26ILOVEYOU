@@ -371,6 +371,38 @@ class TestSARImageIntelligence(unittest.TestCase):
         self.assertEqual(opt_data["status"], "blocked_unsupported_modality")
         self.assertFalse(opt_data["suitable_for_sar_model"])
 
+    def test_dynamic_endpoints_drift_and_dossier(self):
+        """Verifies dynamic coordinate resolution and static fallback binding."""
+        # 1. Backtrack with static incident ID (INC-002 Chennai)
+        res_drift = self.client.post(
+            "/api/v1/drift/backtrack",
+            json={"incident_id": "INC-002", "particle_count": 500, "horizon_hours": 12}
+        )
+        self.assertEqual(res_drift.status_code, 200)
+        drift_data = res_drift.json()
+        self.assertEqual(drift_data["status"], "PROCESSING")
+        self.assertIn("coordinates", drift_data)
+        self.assertAlmostEqual(drift_data["coordinates"]["lat"], 13.250, places=2)
+        self.assertAlmostEqual(drift_data["coordinates"]["lon"], 80.460, places=2)
+
+        # 2. Backtrack with explicit coordinate override
+        res_override = self.client.post(
+            "/api/v1/drift/backtrack",
+            json={"incident_id": "CUSTOM-01", "lat": 12.34, "lng": 78.90, "particle_count": 100}
+        )
+        self.assertEqual(res_override.status_code, 200)
+        override_data = res_override.json()
+        self.assertAlmostEqual(override_data["coordinates"]["lat"], 12.34, places=2)
+        self.assertAlmostEqual(override_data["coordinates"]["lon"], 78.90, places=2)
+
+        # 3. Dossier generation with dynamic incident metadata
+        res_dossier = self.client.get("/api/v1/dossier/INC-002")
+        self.assertEqual(res_dossier.status_code, 200)
+        dossier_data = res_dossier.json()
+        self.assertEqual(dossier_data["status"], "SEALED")
+        self.assertIn("cryptographic_verification", dossier_data)
+        self.assertIn("master_sha256", dossier_data["cryptographic_verification"])
+
 
 if __name__ == "__main__":
     unittest.main()
