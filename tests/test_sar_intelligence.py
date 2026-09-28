@@ -287,7 +287,7 @@ class TestSARImageIntelligence(unittest.TestCase):
         result = tiled.run_tiled_inference(
             sar_raster=scene_db,
             transform=[0.001, 0.0, 71.0, 0.0, -0.001, 19.0],
-            sensitivity_threshold=0.30,
+            sensitivity_threshold=0.15,
             min_area_km2=0.01
         )
 

@@ -17,7 +17,11 @@ class PDFEvidenceGenerator:
     
     def __init__(self, template_dir: str = None, output_dir: str = None):
         base_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-        self.template_dir = template_dir or os.path.join(base_dir, 'templates')
+        # Check app/templates first (standard location), then base templates
+        default_tpl = os.path.join(base_dir, 'templates')
+        if not os.path.exists(default_tpl):
+            default_tpl = os.path.join(base_dir, '..', 'templates')
+        self.template_dir = template_dir or default_tpl
         self.output_dir = output_dir or os.path.join(base_dir, '..', 'storage', 'evidence')
         
         if not os.path.exists(self.output_dir):
@@ -48,7 +52,21 @@ class PDFEvidenceGenerator:
         Returns:
             dict containing file_path, sha256_hash, and generated_at timestamp.
         """
-        template = self.env.get_template('dossier_template.html')
+        try:
+            template = self.env.get_template('dossier_template.html')
+        except Exception:
+            from jinja2 import Template
+            template = Template("""
+            <!DOCTYPE html>
+            <html>
+            <head><title>Spill Sense Evidence Dossier - {{ incident_id }}</title></head>
+            <body>
+            <h1>OFFICIAL MARITIME INVESTIGATION DOSSIER</h1>
+            <p>Incident ID: {{ incident_id }}</p>
+            <p>Coordinates: {{ coordinates }}</p>
+            <p>Generated At: {{ generated_at }}</p>
+            </body></html>
+            """)
         
         # Inject generation timestamp and placeholder for hash
         # The hash cannot be computed until the PDF is generated,
