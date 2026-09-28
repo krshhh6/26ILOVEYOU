@@ -49,10 +49,36 @@ export const Topbar: React.FC<TopbarProps> = ({
   const [searchInput, setSearchInput] = useState('');
   const [isOpen, setIsOpen] = useState(false);
   const [selectedIndex, setSelectedIndex] = useState(-1);
+  const [isPromptedForCleanup, setIsPromptedForCleanup] = useState(false);
+  const scenarioSelectRef = useRef<HTMLSelectElement>(null);
   const searchContainerRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
 
   const activeScenarios = scenarios || SCENARIOS;
+
+  useEffect(() => {
+    const handleRequestIncidentSelection = (e: Event) => {
+      const customEvent = e as CustomEvent;
+      if (customEvent.detail?.reason === 'cleanup') {
+        setIsPromptedForCleanup(true);
+        if (scenarioSelectRef.current) {
+          scenarioSelectRef.current.focus();
+          if (typeof scenarioSelectRef.current.showPicker === 'function') {
+            try {
+              scenarioSelectRef.current.showPicker();
+            } catch (err) {
+              console.warn('showPicker error:', err);
+            }
+          }
+        }
+      }
+    };
+
+    window.addEventListener('spill-sense:request-incident-selection', handleRequestIncidentSelection);
+    return () => {
+      window.removeEventListener('spill-sense:request-incident-selection', handleRequestIncidentSelection);
+    };
+  }, []);
   const searchResults = useMemo(() => {
     return searchMaritimeCatalog(searchInput, activeScenarios);
   }, [searchInput, activeScenarios]);
@@ -255,7 +281,7 @@ export const Topbar: React.FC<TopbarProps> = ({
       <div className="topbar-divider"></div>
 
       {/* SLEEK INCIDENT SELECTOR */}
-      <div className="scenario-selector-pill">
+      <div className={`scenario-selector-pill ${isPromptedForCleanup ? 'highlight-cleanup-prompt' : ''}`}>
         <span
           className="scenario-status-dot"
           style={{ backgroundColor: statusColor, color: statusColor }}
@@ -263,9 +289,16 @@ export const Topbar: React.FC<TopbarProps> = ({
         ></span>
         <select
           id="scenario-dropdown"
+          ref={scenarioSelectRef}
           className="scenario-select-styled"
           value={currentScenarioKey}
-          onChange={(e) => onSelectScenario(e.target.value)}
+          onChange={(e) => {
+            setIsPromptedForCleanup(false);
+            onSelectScenario(e.target.value);
+          }}
+          onBlur={() => {
+            setTimeout(() => setIsPromptedForCleanup(false), 500);
+          }}
           title="Switch Active Maritime Spill Incident"
         >
           <option value="">Select monitored incident...</option>
@@ -275,6 +308,12 @@ export const Topbar: React.FC<TopbarProps> = ({
             </option>
           ))}
         </select>
+        {isPromptedForCleanup && (
+          <span style={{ fontSize: 10, color: '#10B981', fontWeight: 700, whiteSpace: 'nowrap', display: 'flex', alignItems: 'center', gap: 2 }}>
+            <span className="material-symbols-outlined" style={{ fontSize: 13 }}>touch_app</span>
+            Select for Clean-Up
+          </span>
+        )}
       </div>
 
       {/* UNIFIED TELEMETRY CAPSULE */}

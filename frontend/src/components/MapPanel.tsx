@@ -5,6 +5,7 @@ import { TimeScrubber } from './TimeScrubber';
 import { CleanupModal } from './modals/CleanupModal';
 import { runSentinel1Detection } from '../services/detectionService';
 import { createAoiForScenario } from '../utils/geoContours';
+import { SCENARIOS } from '../data/scenarios';
 import { socket, connectSocket } from '../services/socket';
 import L from 'leaflet';
 
@@ -137,6 +138,45 @@ export const MapPanel: React.FC<MapPanelProps> = ({
   const [layerOpacity, setLayerOpacity] = useState<number>(0.92);
   const [showAiMask, setShowAiMask] = useState<boolean>(true);
   const [isCleanupModalOpen, setIsCleanupModalOpen] = useState<boolean>(false);
+  const [showIncidentDropdownMenu, setShowIncidentDropdownMenu] = useState<boolean>(false);
+  const pendingCleanupRef = useRef<boolean>(false);
+  const prevScenarioRef = useRef<Scenario | null>(scenario);
+  const cleanupButtonContainerRef = useRef<HTMLDivElement | null>(null);
+
+  const activeScenarios = scenarios && Object.keys(scenarios).length > 0 ? scenarios : SCENARIOS;
+
+  // Auto-close cleanup modal if scenario becomes null (e.g. user returns to national overview)
+  useEffect(() => {
+    if (!scenario) {
+      setIsCleanupModalOpen(false);
+    }
+  }, [scenario]);
+
+  // When scenario changes, if user clicked Clean-Up while none was selected, open the modal for this selected scenario
+  useEffect(() => {
+    if (!prevScenarioRef.current && scenario && pendingCleanupRef.current) {
+      pendingCleanupRef.current = false;
+      setIsCleanupModalOpen(true);
+      setShowIncidentDropdownMenu(false);
+      const pill = document.querySelector('.scenario-selector-pill');
+      pill?.classList.remove('highlight-cleanup-prompt');
+    }
+    prevScenarioRef.current = scenario;
+  }, [scenario]);
+
+  // Close fallback dropdown menu when clicking outside
+  useEffect(() => {
+    const handleOutsideClick = (e: MouseEvent) => {
+      if (cleanupButtonContainerRef.current && !cleanupButtonContainerRef.current.contains(e.target as Node)) {
+        setShowIncidentDropdownMenu(false);
+      }
+    };
+    if (showIncidentDropdownMenu) {
+      document.addEventListener('mousedown', handleOutsideClick);
+    }
+    return () => document.removeEventListener('mousedown', handleOutsideClick);
+  }, [showIncidentDropdownMenu]);
+
   const [scrubHours, setScrubHours] = useState<number>(0);
   const [showRawImageModal, setShowRawImageModal] = useState<boolean>(false);
   const [modalZoom, setModalZoom] = useState<number>(1.0);
@@ -335,6 +375,68 @@ export const MapPanel: React.FC<MapPanelProps> = ({
     }
   };
 
+  const handleCleanupClick = () => {
+    // If an incident is already selected, open the Clean-Up modal directly
+    if (scenario) {
+      setIsCleanupModalOpen(true);
+      setShowIncidentDropdownMenu(false);
+      return;
+    }
+
+    // No incident selected: open the incident dropdown so user can select which one they want
+    pendingCleanupRef.current = true;
+
+    // Trigger incident picker in Topbar
+    const selectEl = document.getElementById('scenario-dropdown') as HTMLSelectElement | null;
+    let pickerOpened = false;
+
+    if (selectEl) {
+      const pill = selectEl.closest('.scenario-selector-pill');
+      if (pill) {
+        pill.classList.add('highlight-cleanup-prompt');
+      }
+      selectEl.focus();
+
+      // Clear pending state after 25s timeout if user abandons selection
+      setTimeout(() => {
+        if (!scenario && pendingCleanupRef.current) {
+          pendingCleanupRef.current = false;
+          pill?.classList.remove('highlight-cleanup-prompt');
+        }
+      }, 25000);
+
+      if (typeof selectEl.showPicker === 'function') {
+        try {
+          selectEl.showPicker();
+          pickerOpened = true;
+        } catch (err) {
+          console.warn('showPicker on scenario-dropdown failed:', err);
+          pickerOpened = false;
+        }
+      }
+    }
+
+    // Dispatch event to Topbar for custom UI enhancement
+    window.dispatchEvent(
+      new CustomEvent('spill-sense:request-incident-selection', {
+        detail: { reason: 'cleanup' },
+      })
+    );
+
+    // If native picker didn't open (or unsupported), toggle inline dropdown menu
+    if (!pickerOpened) {
+      setShowIncidentDropdownMenu((prev) => !prev);
+    }
+  };
+
+  const handleSelectIncidentFromCleanupMenu = (key: string) => {
+    pendingCleanupRef.current = true;
+    setShowIncidentDropdownMenu(false);
+    if (onSelectScenario) {
+      onSelectScenario(key);
+    }
+  };
+
   const handleStepDate = (deltaDays: number) => {
     const d = new Date(selectedDate);
     d.setDate(d.getDate() + deltaDays);
@@ -415,15 +517,99 @@ export const MapPanel: React.FC<MapPanelProps> = ({
 
           <span style={{ color: 'var(--border-subtle)', fontSize: 12, margin: '0 2px' }}>|</span>
 
-          <button
-            className="btn btn-secondary"
-            onClick={() => setIsCleanupModalOpen(true)}
-            style={{ padding: '3px 9px', fontSize: 11, gap: 5, borderColor: 'rgba(16, 185, 129, 0.4)', background: 'rgba(16, 185, 129, 0.08)' }}
-            title="NOS-DCP Clean-Up Logistics & Resource Allocation Plan"
-          >
-            <span className="material-symbols-outlined" style={{ fontSize: 14, color: '#10B981' }}>cleaning_services</span>
-            <span style={{ color: '#10B981', fontWeight: 600 }}>Clean-Up</span>
-          </button>
+          <div ref={cleanupButtonContainerRef} style={{ position: 'relative', display: 'inline-flex' }}>
+            <button
+              className="btn btn-secondary"
+              onClick={handleCleanupClick}
+              style={{
+                padding: '3px 9px',
+                fontSize: 11,
+                gap: 5,
+                borderColor: 'rgba(16, 185, 129, 0.4)',
+                background: 'rgba(16, 185, 129, 0.08)',
+              }}
+              title={
+                scenario
+                  ? `NOS-DCP Clean-Up Logistics & Resource Allocation Plan (${scenario.id})`
+                  : 'Select an incident to view NOS-DCP Clean-Up Logistics'
+              }
+            >
+              <span className="material-symbols-outlined" style={{ fontSize: 14, color: '#10B981' }}>
+                cleaning_services
+              </span>
+              <span style={{ color: '#10B981', fontWeight: 600 }}>Clean-Up</span>
+              {!scenario && (
+                <span className="material-symbols-outlined" style={{ fontSize: 13, color: '#10B981', marginLeft: -2 }}>
+                  expand_more
+                </span>
+              )}
+            </button>
+
+            {showIncidentDropdownMenu && !scenario && (
+              <div
+                className="cleanup-incident-dropdown"
+                style={{
+                  position: 'absolute',
+                  top: '100%',
+                  right: 0,
+                  marginTop: 6,
+                  background: 'var(--bg-raised, #0f172a)',
+                  border: '1px solid rgba(16, 185, 129, 0.4)',
+                  borderRadius: 6,
+                  boxShadow: '0 8px 24px rgba(0,0,0,0.5)',
+                  minWidth: 280,
+                  zIndex: 1000,
+                  padding: '6px 0',
+                }}
+              >
+                <div
+                  style={{
+                    padding: '6px 12px',
+                    fontSize: 10,
+                    fontWeight: 700,
+                    color: '#10B981',
+                    textTransform: 'uppercase',
+                    letterSpacing: '0.05em',
+                    borderBottom: '1px solid var(--border-subtle, rgba(255,255,255,0.08))',
+                    display: 'flex',
+                    alignItems: 'center',
+                    gap: 6,
+                  }}
+                >
+                  <span className="material-symbols-outlined" style={{ fontSize: 13 }}>touch_app</span>
+                  Select Incident For Clean-Up Plan
+                </div>
+                {Object.entries(activeScenarios).map(([key, s]) => (
+                  <div
+                    key={key}
+                    onClick={() => handleSelectIncidentFromCleanupMenu(key)}
+                    className="cleanup-dropdown-item"
+                    style={{
+                      padding: '8px 12px',
+                      fontSize: 11,
+                      cursor: 'pointer',
+                      display: 'flex',
+                      alignItems: 'center',
+                      gap: 8,
+                      transition: 'background 0.15s ease',
+                    }}
+                  >
+                    <span className="material-symbols-outlined" style={{ fontSize: 14, color: '#10B981' }}>
+                      water_drop
+                    </span>
+                    <div>
+                      <div style={{ fontWeight: 600, color: 'var(--text-primary)' }}>
+                        {s.id}: {s.title}
+                      </div>
+                      <div style={{ fontSize: 9.5, color: 'var(--text-muted)' }}>
+                        {s.oilType} · {s.sev}
+                      </div>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
 
           <button
             className="btn btn-secondary"
