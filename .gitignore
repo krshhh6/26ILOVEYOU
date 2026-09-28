@@ -37,6 +37,7 @@ Thumbs.db
 *.nc4
 *.npz
 ml/cache_patches/
+ml/weights/
 
 # Root junctions for standalone static dashboard
 /demo-sar
