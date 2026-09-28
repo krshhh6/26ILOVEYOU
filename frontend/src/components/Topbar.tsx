@@ -488,6 +488,15 @@ export const Topbar: React.FC<TopbarProps> = ({
           Dossier
         </button>
 
+        {/* 3D Global C2 Opening Replay */}
+        <button
+          className="btn-icon"
+          onClick={() => window.dispatchEvent(new CustomEvent('spill-sense:replay-intro'))}
+          title="Replay 3D Spaceborne Surveillance Globe Intro"
+        >
+          <span className="material-symbols-outlined" style={{ fontSize: 17, color: 'var(--accent)' }}>public</span>
+        </button>
+
         {/* Alerts Notification */}
         <button className="btn-icon notif" title="Maritime Surveillance Alerts (2 Active)">
           <span className="material-symbols-outlined" style={{ fontSize: 17 }}>notifications</span>
