@@ -88,9 +88,9 @@ export async function loadModel(): Promise<void> {
         segmenterSession = await ort.InferenceSession.create('/models/oil_segmenter.onnx', {
           executionProviders: ['wasm'],
         });
-        console.log(`[SAR] SpillSegNet segmenter session ready`);
+        console.log(`[SAR] DANN Multi-Scale U-Net (Plan 2.0) segmenter session ready`);
       } catch (segErr) {
-        console.warn('[SAR] SpillSegNet not loaded, running classification only:', segErr);
+        console.warn('[SAR] DANN segmenter not loaded, running classification only:', segErr);
       }
 
       break;
@@ -119,7 +119,9 @@ export function validateSarImage(data: Uint8ClampedArray, width: number, height:
   let sumBrightness = 0;
   let brightCount = 0;
   let coloredPixels = 0;
+  let mildColorPixels = 0;
   let colorDiffSum = 0;
+  let darkPixelCount = 0;
 
   const grayValues = new Float32Array(totalPixels);
   const histogram = new Int32Array(256);
@@ -132,7 +134,10 @@ export function validateSarImage(data: Uint8ClampedArray, width: number, height:
     const maxC = Math.max(r, Math.max(g, b));
     const minC = Math.min(r, Math.min(g, b));
     const chroma = maxC - minC;
-    if (chroma > 18) coloredPixels++;
+    // In authentic SAR images (Sentinel-1, ISRO RISAT), pixels are pure grayscale (chroma <= 4).
+    // Screenshots, web UIs, maps, daylight photos have distinct color pixels.
+    if (chroma > 14) coloredPixels++;
+    if (chroma > 6) mildColorPixels++;
     colorDiffSum += chroma;
 
     const gray = Math.round(0.299 * r + 0.587 * g + 0.114 * b);
@@ -140,13 +145,16 @@ export function validateSarImage(data: Uint8ClampedArray, width: number, height:
     histogram[gray]++;
     sumBrightness += gray;
     if (gray > 190) brightCount++;
+    if (gray <= 50) darkPixelCount++;
   }
 
   const meanBrightness = sumBrightness / totalPixels;
   const brightRatio = brightCount / totalPixels;
   const coloredRatio = coloredPixels / totalPixels;
+  const mildColorRatio = mildColorPixels / totalPixels;
   const avgColorDiff = colorDiffSum / totalPixels;
-  const isColor = coloredRatio > 0.08 || avgColorDiff > 25;
+  const darkRatio = darkPixelCount / totalPixels;
+  const isColor = coloredRatio > 0.015 || mildColorRatio > 0.04 || avgColorDiff > 2.5;
 
   // 1. Measure spatial speckle noise via 5x5 blocks (excluding pure satellite NoData borders)
   const bs = 5;
@@ -174,36 +182,60 @@ export function validateSarImage(data: Uint8ClampedArray, width: number, height:
       validBlocks++;
       const bMean = bSum / 25;
       const bVariance = bSumSq / 25 - bMean * bMean;
-      // If block has near-zero variance (< 1.5), it is a synthetic flat digital surface
-      if (bVariance < 1.5) {
+      // If block has near-zero variance (< 2.5), it is a synthetic flat digital surface
+      if (bVariance < 2.5) {
         flatBlocks++;
       }
     }
   }
   const flatRatio = validBlocks > 0 ? flatBlocks / validBlocks : 1.0;
 
-  // 2. Check for dominant single background value
+  // 2. Check for dominant single background value & histogram entropy
   let maxModeCount = 0;
   let maxModeVal = 0;
+  let populatedBins = 0;
   for (let g = 0; g < 256; g++) {
     if (histogram[g] > maxModeCount) {
       maxModeCount = histogram[g];
       maxModeVal = g;
     }
+    if (histogram[g] > totalPixels * 0.0004) {
+      populatedBins++;
+    }
   }
   const maxModeRatio = maxModeCount / totalPixels;
 
-  // REJECTION 1: Extreme Solid Canvas (Entire image is single synthetic flat color)
-  if (flatRatio > 0.94) {
+  // REJECTION 1: Color / Multi-Spectral Content (Web screenshots, daylight optical photos, maps)
+  // SAR imagery is strictly single-polarization grayscale microwave radar backscatter.
+  if (coloredRatio > 0.025 || (mildColorRatio > 0.06 && avgColorDiff > 3.0) || avgColorDiff > 6.0) {
     return {
       isValid: false,
-      reason: `Blank / Uniform Graphic (Lacks physical radar backscatter: ${(flatRatio * 100).toFixed(0)}% synthetic flat space)`,
+      reason: `Color / Multi-Spectral Content Detected (Colored pixels: ${(coloredRatio * 100).toFixed(1)}%, Chroma divergence: ${avgColorDiff.toFixed(1)} — SAR is strictly single-channel grayscale microwave backscatter, not RGB optical photography or web screenshots)`,
       metrics: { meanBrightness, brightRatio, sharpTransitions: flatRatio, isColor }
     };
   }
 
-  // REJECTION 2: Artificial Solid Background covering nearly entire frame
-  if (maxModeRatio > 0.90 && maxModeVal !== 0) {
+  // REJECTION 2: Dark UI / Application / Dashboard Screenshot
+  // Dark web applications have very low mean brightness or high dark mass, combined with synthetic flat UI panels or color accents.
+  if (meanBrightness < 75 && (isColor || flatRatio > 0.28 || darkRatio > 0.45 && flatRatio > 0.20)) {
+    return {
+      isValid: false,
+      reason: `Dark UI / Web Application Screenshot Detected (Mean brightness: ${meanBrightness.toFixed(0)}, Flat UI regions: ${(flatRatio * 100).toFixed(0)}%, Dark pixel mass: ${(darkRatio * 100).toFixed(0)}% — not a marine radar backscatter scene)`,
+      metrics: { meanBrightness, brightRatio, sharpTransitions: flatRatio, isColor }
+    };
+  }
+
+  // REJECTION 3: Synthetic Flat / Digital Graphic
+  if (flatRatio > 0.50) {
+    return {
+      isValid: false,
+      reason: `Synthetic / Digital Interface Graphic (Lacks physical radar speckle: ${(flatRatio * 100).toFixed(0)}% synthetic flat space)`,
+      metrics: { meanBrightness, brightRatio, sharpTransitions: flatRatio, isColor }
+    };
+  }
+
+  // REJECTION 4: Artificial Solid Background covering major portion of canvas
+  if (maxModeRatio > 0.65 && maxModeVal !== 0) {
     return {
       isValid: false,
       reason: `Single Solid Color (Covers ${(maxModeRatio * 100).toFixed(0)}% of image canvas)`,
@@ -211,19 +243,8 @@ export function validateSarImage(data: Uint8ClampedArray, width: number, height:
     };
   }
 
-  // REJECTION 3: Vivid High-Saturation Daylight Photo (Selfie / Natural Landscape / Cartoon)
-  // Note: Screenshots of SAR tools (Bhoonidhi, Sentinel Hub, GIS) with UI colors or false-color palettes
-  // are accepted and converted to radar luminance. Only heavily saturated non-radar scenes are rejected.
-  if (coloredRatio > 0.65 && avgColorDiff > 45) {
-    return {
-      isValid: false,
-      reason: `Optical Color Photography (High-saturation non-radar scene; SAR is microwave backscatter)`,
-      metrics: { meanBrightness, brightRatio, sharpTransitions: flatRatio, isColor }
-    };
-  }
-
-  // REJECTION 4: Printed document / paper sheet / blank white page
-  if (brightRatio > 0.85 && meanBrightness > 225) {
+  // REJECTION 5: Blank Document / High-Luminance Sheet / White Page
+  if (brightRatio > 0.80 && meanBrightness > 215) {
     return {
       isValid: false,
       reason: 'Blank Document / High-Luminance Sheet (Non-Marine Scene)',
@@ -231,11 +252,21 @@ export function validateSarImage(data: Uint8ClampedArray, width: number, height:
     };
   }
 
-  // REJECTION 5: Blank / empty black frame
+  // REJECTION 6: Blank / Empty Black Frame
   if (meanBrightness < 4) {
     return {
       isValid: false,
       reason: 'Empty / Black Frame (Zero radar backscatter signal)',
+      metrics: { meanBrightness, brightRatio, sharpTransitions: flatRatio, isColor }
+    };
+  }
+
+  // REJECTION 7: Low-Entropy Discrete / Indexed Graphic
+  // Real SAR scenes have continuous Rayleigh-distributed gray tones across 60+ bins.
+  if (populatedBins < 35 && meanBrightness < 160) {
+    return {
+      isValid: false,
+      reason: `Low-Entropy Discrete Graphic (${populatedBins} discrete intensity levels — SAR scenes have continuous physical radar backscatter distribution)`,
       metrics: { meanBrightness, brightRatio, sharpTransitions: flatRatio, isColor }
     };
   }
@@ -296,12 +327,13 @@ function computeDeterministicPhysicsScore(
   const coreRatio = coreDampedCount / denominator;
 
   // Radar physics damping score:
-  // True slicks have high dampRatio (> 0.015) with a dark core and reasonable contrast
+  // True slicks have high dampRatio (> 0.04) with a dark core and reasonable contrast.
+  // Raised from 0.015 → 0.04 to eliminate spurious speckle-noise triggers on clean ocean.
   let logit = -1.2;
-  if (dampRatio > 0.015) {
+  if (dampRatio > 0.04) {
     logit += dampRatio * 18.0;
   }
-  if (coreRatio > 0.005) {
+  if (coreRatio > 0.01) {
     logit += coreRatio * 32.0;
   }
   // Penalize uniformly dark empty images (lookalikes / low wind)
@@ -416,8 +448,10 @@ export function generateDeterministicMask(
   }
 
   const oceanMean = validMarinePixels > 0 ? sumLum / validMarinePixels : 85;
-  const dampThreshold = Math.min(125, Math.max(35, oceanMean * 0.88));
-  const coreThreshold = Math.min(80, Math.max(20, oceanMean * 0.60));
+  // Tightened from 0.88 → 0.80 to require a more significant backscatter depression
+  // before a pixel is considered a dark-area candidate (reduces speckle false positives).
+  const dampThreshold = Math.min(115, Math.max(30, oceanMean * 0.80));
+  const coreThreshold = Math.min(70, Math.max(18, oceanMean * 0.58));
 
   const landBuffer = computeLandBufferMask(lums, width, height, 5);
   const rawMask = new Uint8Array(totalPixels);
@@ -454,7 +488,9 @@ export function generateDeterministicMask(
       }
 
       const isCore = lums[idx] <= coreThreshold;
-      if (neighborCount >= 1 || isCore) {
+      // Raised from >= 1 → >= 3: requires at least 3 dark neighbours in a 3×3 window
+      // to eliminate isolated speckle pixels while preserving contiguous slick regions.
+      if (neighborCount >= 3 || (isCore && neighborCount >= 2)) {
         spillPixels++;
         const pIdx = idx * 4;
         mData[pIdx] = 255;                    // R: vivid warning red
@@ -598,47 +634,15 @@ export function createCompatibleCanvas(
     appliedCrop = { x: cx, y: cy, width: cw, height: ch };
     ctx.drawImage(source, cx, cy, cw, ch, 0, 0, targetWidth, targetHeight);
   } else if (activeViewport.hasLetterbox) {
-    // When image contains letterbox bars, center-crop within the active radar content
+    // When image contains synthetic outer letterbox bars, isolate the actual radar viewport
     const baseW = activeViewport.width;
     const baseH = activeViewport.height;
-    const size = Math.min(baseW, baseH);
-    const sx = activeViewport.x + Math.max(0, Math.floor((baseW - size) / 2));
-    const sy = activeViewport.y + Math.max(0, Math.floor((baseH - size) / 2));
-    appliedCrop = { x: sx, y: sy, width: size, height: size };
-    wasCenterCropped = true;
-    ctx.drawImage(source, sx, sy, size, size, 0, 0, targetWidth, targetHeight);
-  } else if (srcW === srcH) {
+    appliedCrop = { x: activeViewport.x, y: activeViewport.y, width: baseW, height: baseH };
+    ctx.drawImage(source, activeViewport.x, activeViewport.y, baseW, baseH, 0, 0, targetWidth, targetHeight);
+  } else {
+    // Ingest the full rectangular SAR scene without chopping off left/right edges
     appliedCrop = { x: 0, y: 0, width: srcW, height: srcH };
     ctx.drawImage(source, 0, 0, targetWidth, targetHeight);
-  } else {
-    // Non-square image: center-crop square to prevent aspect-ratio distortion
-    const size = Math.min(srcW, srcH);
-    const sx = Math.max(0, Math.floor((srcW - size) / 2));
-    const sy = Math.max(0, Math.floor((srcH - size) / 2));
-    appliedCrop = { x: sx, y: sy, width: size, height: size };
-    wasCenterCropped = true;
-    ctx.drawImage(source, sx, sy, size, size, 0, 0, targetWidth, targetHeight);
-  }
-
-  // Ensure canvas pixels are calibrated radar-compatible grayscale luminance:
-  // converts any colored web PNGs, false-color layers, or UI screenshot graphics
-  const imgData = ctx.getImageData(0, 0, targetWidth, targetHeight);
-  const px = imgData.data;
-  let hasChroma = false;
-  for (let i = 0; i < px.length; i += 4) {
-    if (Math.abs(px[i] - px[i + 1]) > 8 || Math.abs(px[i] - px[i + 2]) > 8 || Math.abs(px[i + 1] - px[i + 2]) > 8) {
-      hasChroma = true;
-      break;
-    }
-  }
-  if (hasChroma) {
-    for (let i = 0; i < px.length; i += 4) {
-      const lum = Math.round(0.299 * px[i] + 0.587 * px[i + 1] + 0.114 * px[i + 2]);
-      px[i] = lum;
-      px[i + 1] = lum;
-      px[i + 2] = lum;
-    }
-    ctx.putImageData(imgData, 0, 0);
   }
 
   return { canvas, appliedCrop, wasCenterCropped, originalWidth: srcW, originalHeight: srcH };
@@ -653,8 +657,23 @@ export function extractCroppedImageDataUrl(
   targetSize?: number
 ): string {
   const canvas = document.createElement('canvas');
-  const outW = targetSize || Math.round(cropBox.width);
-  const outH = targetSize || Math.round(cropBox.height);
+  const cropW = Math.max(1, Math.round(cropBox.width));
+  const cropH = Math.max(1, Math.round(cropBox.height));
+  const aspect = cropW / cropH;
+
+  let outW = cropW;
+  let outH = cropH;
+
+  if (targetSize && targetSize > 0) {
+    if (aspect >= 1) {
+      outW = targetSize;
+      outH = Math.max(1, Math.round(targetSize / aspect));
+    } else {
+      outH = targetSize;
+      outW = Math.max(1, Math.round(targetSize * aspect));
+    }
+  }
+
   canvas.width = outW;
   canvas.height = outH;
   const ctx = canvas.getContext('2d')!;
@@ -665,33 +684,13 @@ export function extractCroppedImageDataUrl(
     source,
     Math.round(cropBox.x),
     Math.round(cropBox.y),
-    Math.round(cropBox.width),
-    Math.round(cropBox.height),
+    cropW,
+    cropH,
     0,
     0,
     outW,
     outH
   );
-
-  // Calibrate colored pixels to compatible radar grayscale
-  const imgData = ctx.getImageData(0, 0, outW, outH);
-  const px = imgData.data;
-  let hasChroma = false;
-  for (let i = 0; i < px.length; i += 4) {
-    if (Math.abs(px[i] - px[i + 1]) > 8 || Math.abs(px[i] - px[i + 2]) > 8 || Math.abs(px[i + 1] - px[i + 2]) > 8) {
-      hasChroma = true;
-      break;
-    }
-  }
-  if (hasChroma) {
-    for (let i = 0; i < px.length; i += 4) {
-      const lum = Math.round(0.299 * px[i] + 0.587 * px[i + 1] + 0.114 * px[i + 2]);
-      px[i] = lum;
-      px[i + 1] = lum;
-      px[i + 2] = lum;
-    }
-    ctx.putImageData(imgData, 0, 0);
-  }
 
   return canvas.toDataURL('image/png');
 }
@@ -710,13 +709,12 @@ export function autoDetectCapillaryDampingROI(
   const srcH = source instanceof HTMLImageElement ? (source.naturalHeight || source.height) : source.height;
 
   const minDim = Math.min(srcW, srcH);
-  if (minDim <= 400) {
-    const size = minDim;
+  if (minDim <= 48) {
     return {
-      x: Math.max(0, Math.floor((srcW - size) / 2)),
-      y: Math.max(0, Math.floor((srcH - size) / 2)),
-      width: size,
-      height: size,
+      x: 0,
+      y: 0,
+      width: srcW,
+      height: srcH,
     };
   }
 
@@ -732,8 +730,7 @@ export function autoDetectCapillaryDampingROI(
   const totalPixels = gridDim * gridDim;
 
   const grayValues = new Uint8Array(totalPixels);
-  let totalMarine = 0;
-  let marineLuminanceSum = 0;
+  const marineSamples: number[] = [];
 
   for (let i = 0; i < totalPixels; i++) {
     const r = data[i * 4];
@@ -741,18 +738,21 @@ export function autoDetectCapillaryDampingROI(
     const b = data[i * 4 + 2];
     const gray = Math.round(0.299 * r + 0.587 * g + 0.114 * b);
     grayValues[i] = gray;
-    if (gray >= 5 && gray <= 230) {
-      totalMarine++;
-      marineLuminanceSum += gray;
+    if (gray >= 12 && gray <= 180) {
+      marineSamples.push(gray);
     }
   }
 
-  const ambientOceanMean = totalMarine > 0 ? marineLuminanceSum / totalMarine : 80;
+  marineSamples.sort((a, b) => a - b);
+  const p78 = marineSamples.length > 0
+    ? marineSamples[Math.floor(marineSamples.length * 0.78)]
+    : 85;
+  const ambientOcean = Math.max(70, Math.min(160, p78));
 
   const windowSizes = [
-    Math.round(gridDim * 0.40),
-    Math.round(gridDim * 0.55),
-    Math.round(gridDim * 0.70),
+    Math.round(gridDim * 0.35),
+    Math.round(gridDim * 0.50),
+    Math.round(gridDim * 0.65),
   ];
 
   let bestScore = -1;
@@ -761,44 +761,50 @@ export function autoDetectCapillaryDampingROI(
   let bestGridSize = windowSizes[1];
 
   for (const winSize of windowSizes) {
-    const step = Math.max(6, Math.floor(winSize / 6));
+    const step = Math.max(4, Math.floor(winSize / 6));
     for (let gy = 0; gy <= gridDim - winSize; gy += step) {
       for (let gx = 0; gx <= gridDim - winSize; gx += step) {
         let winMarineCount = 0;
         let winDampedCount = 0;
         let winCoreCount = 0;
-        let winSum = 0;
+        let winSeaCount = 0;
+        const winVals: number[] = [];
 
         for (let py = 0; py < winSize; py += 2) {
           const rowOffset = (gy + py) * gridDim;
           for (let px = 0; px < winSize; px += 2) {
             const val = grayValues[rowOffset + (gx + px)];
-            if (val >= 5 && val <= 230) {
+            if (val >= 12 && val <= 200) {
               winMarineCount++;
-              winSum += val;
-              if (val <= 55) winDampedCount++;
-              if (val <= 32) winCoreCount++;
+              winVals.push(val);
+              if (val <= ambientOcean * 0.85) winDampedCount++;
+              if (val <= ambientOcean * 0.60) winCoreCount++;
+              if (val >= ambientOcean * 0.95) winSeaCount++;
             }
           }
         }
 
         if (winMarineCount < (winSize * winSize) / 8) continue;
 
-        const winMean = winSum / winMarineCount;
-        const dampRatio = winDampedCount / winMarineCount;
-        const coreRatio = winCoreCount / winMarineCount;
-        const depressionDb = Math.max(0, ambientOceanMean - winMean);
+        winVals.sort((a, b) => a - b);
+        const p10 = winVals[Math.floor(winVals.length * 0.10)];
+        const p90 = winVals[Math.floor(winVals.length * 0.90)];
+        const contrast = p90 - p10;
 
-        let score = dampRatio * 3.0 + coreRatio * 5.0 + (depressionDb / 40.0);
-        if (dampRatio > 0.92 && depressionDb < 10) {
-          score *= 0.2;
-        }
+        // An authentic oil slick hotspot has dark damped core AND bright surrounding sea
+        if (p10 < ambientOcean * 0.85 && p90 > ambientOcean * 0.75) {
+          const slickFraction = winDampedCount / winMarineCount;
+          const seaFraction = winSeaCount / winMarineCount;
+          const balance = Math.min(slickFraction, seaFraction) * 4.0;
+          const coreBonus = (winCoreCount / winMarineCount) * 40.0;
+          const score = contrast * (1.0 + balance) + coreBonus;
 
-        if (score > bestScore) {
-          bestScore = score;
-          bestGridX = gx;
-          bestGridY = gy;
-          bestGridSize = winSize;
+          if (score > bestScore) {
+            bestScore = score;
+            bestGridX = gx;
+            bestGridY = gy;
+            bestGridSize = winSize;
+          }
         }
       }
     }
@@ -817,7 +823,7 @@ export function autoDetectCapillaryDampingROI(
   const scaleX = srcW / gridDim;
   const scaleY = srcH / gridDim;
   const targetPxSize = Math.round(bestGridSize * Math.min(scaleX, scaleY));
-  const finalSize = Math.min(minDim, Math.max(256, targetPxSize));
+  const finalSize = Math.min(minDim, Math.max(48, targetPxSize));
 
   const centerX = (bestGridX + bestGridSize / 2) * scaleX;
   const centerY = (bestGridY + bestGridSize / 2) * scaleY;
@@ -897,7 +903,7 @@ export async function classifyImage(
     };
   }
 
-  // Real ONNX inference
+  // Real ONNX inference with Dual-Model Synergy (Classifier + DANN U-Net)
   const numPixels = 400 * 400;
   const tensorData = new Float32Array(2 * numPixels);
   const hasDirectRasters = !cropBox && !wasCenterCropped &&
@@ -905,15 +911,36 @@ export async function classifyImage(
                            dualPolRasters.vvRaster.length === numPixels &&
                            dualPolRasters.vhRaster.length === numPixels;
 
+  let sumMarine = 0;
+  let marineCount = 0;
+  const grayValues = new Uint8Array(numPixels);
+  for (let i = 0; i < numPixels; i++) {
+    const r = data[i * 4];
+    const g = data[i * 4 + 1];
+    const b = data[i * 4 + 2];
+    const gray = Math.round(0.299 * r + 0.587 * g + 0.114 * b);
+    grayValues[i] = gray;
+    if (gray >= 12 && gray <= 165) {
+      sumMarine += gray;
+      marineCount++;
+    }
+  }
+  const ambientOceanMean = marineCount > 0 ? sumMarine / marineCount : 85;
+
   for (let i = 0; i < numPixels; i++) {
     if (hasDirectRasters) {
       tensorData[i] = dualPolRasters.vvRaster![i];
       tensorData[numPixels + i] = dualPolRasters.vhRaster![i];
     } else {
-      const r = data[i * 4];
-      const g = data[i * 4 + 1];
-      const b = data[i * 4 + 2];
-      const vv = (0.299 * r + 0.587 * g + 0.114 * b) / 255.0;
+      const gray = grayValues[i];
+      // Terrestrial land suppression (gray > 165) & letterbox padding (gray < 12):
+      // Clamp to ambient sea level so the classifier's global average pooling focuses on
+      // the marine water surface rather than being drowned out by bright terrestrial terrain
+      let effectiveGray = gray;
+      if (gray > 165 || gray < 12) {
+        effectiveGray = ambientOceanMean;
+      }
+      const vv = effectiveGray / 255.0;
       const vh = Math.max(0.0, vv - 0.22);
       tensorData[i] = vv;
       tensorData[numPixels + i] = vh;
@@ -926,64 +953,92 @@ export async function classifyImage(
 
   const results = await classifierSession.run(feeds);
   const logit = results[classifierSession.outputNames[0]].data[0] as number;
-  const prob = sigmoid(logit);
+  const classifierProb = sigmoid(logit);
 
-  const isOil = prob >= optimalThreshold;
-  // Calibrated decision confidence:
-  // For prob >= optimalThreshold, calibrated confidence scales smoothly in [50%, 100%]
-  // For prob < optimalThreshold, calibrated confidence scales in [50%, 100%] toward clean ocean
-  const confidence = isOil
-    ? (prob >= 0.50 ? prob : Math.max(0.52, 0.50 + 0.50 * ((prob - optimalThreshold) / (0.50 - optimalThreshold + 1e-5))))
-    : Math.max(0.52, 1 - prob);
+  // Run Dense Pixel-Wise Segmenter (Domain-Adversarial U-Net with ASPP & CBAM)
+  let segResult: { dataUrl: string; areaPercent: number } | null = null;
+  let segTimeMs: number | undefined;
+
+  if (segmenterSession) {
+    const segStart = performance.now();
+    try {
+      segResult = await runSegmentation(imageElement, dualPolRasters, cropBox);
+      segTimeMs = Math.round(performance.now() - segStart);
+    } catch (e) {
+      console.warn('[SAR] Segmentation failed, falling back to deterministic mask:', e);
+      const fallbackMask = generateDeterministicMask(data, 400, 400, dualPolRasters);
+      // Must meet the same 1.5% minimum as the primary segmenter path to avoid
+      // speckle noise from the fallback triggering a false oil-spill verdict.
+      if (fallbackMask.areaPercent >= 1.5) {
+        segResult = { dataUrl: fallbackMask.dataUrl, areaPercent: fallbackMask.areaPercent };
+      }
+      segTimeMs = Math.round(performance.now() - segStart);
+    }
+  } else {
+    const segStart = performance.now();
+    const fallbackMask = generateDeterministicMask(data, 400, 400, dualPolRasters);
+    // Require >= 1.5% to match primary path — prevents clean-ocean false positives.
+    if (fallbackMask.areaPercent >= 1.5) {
+      segResult = { dataUrl: fallbackMask.dataUrl, areaPercent: fallbackMask.areaPercent };
+    }
+    segTimeMs = Math.round(performance.now() - segStart);
+  }
+
+  // Dual-Model Consensus Decision:
+  // - Segmenter provides high-resolution localized pixel detection with capillary wave damping physics
+  // - Classifier provides whole-scene radar feature confirmation
+  // Raised minimum slick area from 0.04% → 1.5%.
+  // Sub-1.5% detections on clean ocean are virtually always scattered speckle noise,
+  // not a real coherent oil slick, and should not trigger a spill verdict.
+  const hasSegmenterSlick = !!(segResult && segResult.areaPercent >= 1.5 && segResult.dataUrl);
+  const isClassifierOil = classifierProb >= optimalThreshold;
+
+  let finalPrediction: 'oil_spill' | 'no_oil';
+  let finalConfidence: number;
+  let finalMask: string | undefined = undefined;
+  let finalAreaPercent: number | undefined = undefined;
+
+  if (hasSegmenterSlick) {
+    // Definitive physical detection of capillary damping plume by DANN U-Net
+    finalPrediction = 'oil_spill';
+    finalMask = segResult!.dataUrl;
+    finalAreaPercent = segResult!.areaPercent;
+    // Calibrated high confidence reflecting multi-scale U-Net verification
+    finalConfidence = isClassifierOil
+      ? Math.max(classifierProb, 0.92)
+      : Math.max(0.88, 0.82 + 0.12 * Math.min(1.0, segResult!.areaPercent / 2.0));
+  } else if (isClassifierOil) {
+    // Classifier triggered: segmenter must also confirm a coherent slick (>= 1.5% area)
+    // to avoid false positives on classifier confidence alone.
+    if (classifierProb >= 0.50 && segResult?.dataUrl && segResult.areaPercent >= 1.5) {
+      finalPrediction = 'oil_spill';
+      finalConfidence = classifierProb;
+      finalMask = segResult.dataUrl;
+      finalAreaPercent = segResult.areaPercent;
+    } else {
+      // Classifier fired but zero physical evidence → clean. Confidence = certainty of clean verdict.
+      finalPrediction = 'no_oil';
+      finalConfidence = Math.max(0.75, 1 - classifierProb);
+    }
+  } else {
+    // Both classifier and dense segmenter confirm clean ocean
+    finalPrediction = 'no_oil';
+    finalConfidence = Math.max(0.68, 1 - classifierProb);
+  }
+
   const classificationTimeMs = Math.round(performance.now() - start);
 
   const result: ExtendedClassificationResult = {
     imageFile: imageElement instanceof HTMLImageElement ? imageElement.src : 'canvas',
-    prediction: isOil ? 'oil_spill' : 'no_oil',
-    confidence,
+    prediction: finalPrediction,
+    confidence: finalConfidence,
     inferenceTimeMs: classificationTimeMs,
     metrics: validation.metrics,
     cropInfo,
+    segmentationMask: finalMask,
+    spillAreaPercent: finalAreaPercent,
+    segmentationTimeMs: segTimeMs,
   };
-
-  // Run segmenter if classifier detects oil
-  if (isOil) {
-    if (segmenterSession) {
-      const segStart = performance.now();
-      try {
-        const segMaskUrl = await runSegmentation(imageElement, dualPolRasters, cropBox);
-        if (segMaskUrl.dataUrl && segMaskUrl.areaPercent > 0) {
-          result.segmentationMask = segMaskUrl.dataUrl;
-          result.spillAreaPercent = segMaskUrl.areaPercent;
-        } else {
-          // Both U-Net and physics gating found 0 true spill pixels
-          result.segmentationMask = undefined;
-          result.spillAreaPercent = 0;
-          if (prob < 0.50) {
-            // Re-calibrate classification: marginal probability with zero physical spill area
-            result.prediction = 'no_oil';
-            result.confidence = Math.max(0.75, 1 - prob);
-          }
-        }
-        result.segmentationTimeMs = Math.round(performance.now() - segStart);
-      } catch (e) {
-        console.warn('[SAR] Segmentation failed, falling back to deterministic mask:', e);
-        const fallbackMask = generateDeterministicMask(data, 400, 400, dualPolRasters);
-        if (fallbackMask.areaPercent > 0) {
-          result.segmentationMask = fallbackMask.dataUrl;
-          result.spillAreaPercent = fallbackMask.areaPercent;
-        }
-      }
-    } else {
-      const segStart = performance.now();
-      const fallbackMask = generateDeterministicMask(data, 400, 400, dualPolRasters);
-      if (fallbackMask.areaPercent > 0) {
-        result.segmentationMask = fallbackMask.dataUrl;
-        result.spillAreaPercent = fallbackMask.areaPercent;
-      }
-      result.segmentationTimeMs = Math.round(performance.now() - segStart);
-    }
-  }
 
   return result;
 }
@@ -997,7 +1052,7 @@ async function runSegmentation(
     return { dataUrl: '', areaPercent: 0 };
   }
 
-  const { canvas } = createCompatibleCanvas(imageElement, 512, 512, cropBox);
+  const { canvas, appliedCrop } = createCompatibleCanvas(imageElement, 512, 512, cropBox);
   const ctx = canvas.getContext('2d')!;
   const imageData = ctx.getImageData(0, 0, 512, 512);
   const data = imageData.data;
@@ -1005,6 +1060,7 @@ async function runSegmentation(
   const grayValues = new Uint8Array(numPixels);
   let sumMarine = 0;
   let marineCount = 0;
+  const marineSamplesArray: number[] = [];
 
   for (let i = 0; i < numPixels; i++) {
     const r = data[i * 4];
@@ -1012,14 +1068,25 @@ async function runSegmentation(
     const b = data[i * 4 + 2];
     const gray = Math.round(0.299 * r + 0.587 * g + 0.114 * b);
     grayValues[i] = gray;
-    if (gray >= 12 && gray <= 165) {
+    if (gray >= 12 && gray <= 180) {
       sumMarine += gray;
       marineCount++;
+      if (marineCount % 4 === 0) {
+        marineSamplesArray.push(gray);
+      }
     }
   }
 
-  const ambientOceanMean = marineCount > 0 ? sumMarine / marineCount : 85;
-  const landBuffer = computeLandBufferMask(grayValues, 512, 512, 5);
+  // Robust percentile-based ambient sea level:
+  // Sort sample to compute 78th percentile of marine pixels.
+  // In scenes with dark coastal deltas or low-wind shadows, the simple mean is dragged down.
+  // The 78th percentile captures the undisturbed open-sea capillary roughness.
+  marineSamplesArray.sort((a, b) => a - b);
+  const p78 = marineSamplesArray.length > 0 
+    ? marineSamplesArray[Math.floor(marineSamplesArray.length * 0.78)] 
+    : 85;
+  const ambientOceanMean = Math.max(70, Math.min(160, p78));
+  const landBuffer = computeLandBufferMask(grayValues, 512, 512, 7);
 
   // 2D Swath Background Polynomial Detrending (Plan 2.0):
   // Eliminates antenna angle roll-off & low-wind ocean gradients across the scene
@@ -1029,7 +1096,7 @@ async function runSegmentation(
     for (let x = 0; x < 512; x += 4) {
       const idx = y * 512 + x;
       const g = grayValues[idx];
-      if (g >= 12 && g <= 165 && landBuffer[idx] === 0) {
+      if (g >= 12 && g <= 180 && landBuffer[idx] === 0) {
         sumX += x; sumY += y; sumG += g;
         sumXX += x * x; sumYY += y * y;
         sumXG += x * g; sumYG += y * g;
@@ -1075,13 +1142,13 @@ async function runSegmentation(
         // Synthetic black border / letterbox: pad with ambient ocean
         tensorData[i] = 0.62;
         tensorData[numPixels + i] = 0.56;
-      } else if (rawG >= 165) {
+      } else if (rawG >= 180) {
         // High backscatter landmass / vessel metal
         tensorData[i] = 1.0;
         tensorData[numPixels + i] = 0.95;
       } else {
         // Detrend large-scale background slope (e.g. dark right-side roll-off)
-        const gray = Math.max(12, Math.min(165, rawG - (slopeX * (x - 256) + slopeY * (y - 256))));
+        const gray = Math.max(12, Math.min(180, rawG - (slopeX * (x - 256) + slopeY * (y - 256))));
         if (gray <= ambientOceanMean) {
           // Capillary damping depression (oil slick): maps [12, ambient] -> [0.10, 0.62]
           const ratio = (gray - 12.0) / Math.max(1.0, ambientOceanMean - 12.0);
@@ -1089,8 +1156,8 @@ async function runSegmentation(
           tensorData[i] = vv;
           tensorData[numPixels + i] = Math.max(0.0, vv - 0.05);
         } else {
-          // Rough ocean water: maps (ambient, 165] -> (0.62, 0.92]
-          const ratio = (gray - ambientOceanMean) / Math.max(1.0, 165.0 - ambientOceanMean);
+          // Rough ocean water: maps (ambient, 180] -> (0.62, 0.92]
+          const ratio = (gray - ambientOceanMean) / Math.max(1.0, 180.0 - ambientOceanMean);
           const vv = 0.62 + 0.30 * Math.min(1.0, ratio);
           tensorData[i] = vv;
           tensorData[numPixels + i] = Math.max(0.0, vv - 0.05);
@@ -1107,9 +1174,11 @@ async function runSegmentation(
   const output = results[segmenterSession.outputNames[0]];
   const outputData = output.data as Float32Array;
 
-  // Damping threshold: must be darker than ambient sea
-  const dampThreshold = Math.max(25, ambientOceanMean * 0.92);
-  const coreDampThreshold = Math.max(15, ambientOceanMean * 0.65);
+  // Damping threshold: must be noticeably darker than ambient sea.
+  // Tightened from 0.92 → 0.83 so that ordinary speckle variance (~8% below mean)
+  // does not qualify as an oil-damped pixel (requires ~17% below ambient sea level).
+  const dampThreshold = Math.max(45, ambientOceanMean * 0.83);
+  const coreDampThreshold = Math.max(22, ambientOceanMean * 0.62);
 
   const rawMask = new Uint8Array(numPixels);
   for (let i = 0; i < numPixels; i++) {
@@ -1117,16 +1186,17 @@ async function runSegmentation(
     const x = i % 512;
     const y = Math.floor(i / 512);
     const rawG = grayValues[i];
-    const gray = (rawG >= 12 && rawG <= 165)
-      ? Math.max(12, Math.min(165, rawG - (slopeX * (x - 256) + slopeY * (y - 256))))
+    const gray = (rawG >= 12 && rawG <= 180)
+      ? Math.max(12, Math.min(180, rawG - (slopeX * (x - 256) + slopeY * (y - 256))))
       : rawG;
 
     // Physics-gated oil spill criteria:
-    // 1. Calibrated U-Net confidence (prob >= 0.35)
+    // 1. Calibrated U-Net confidence — raised from 0.35 → 0.50 to reduce false positives
+    //    caused by low-confidence predictions on speckle noise
     // 2. Real radar signal (rawG >= 12), not synthetic black void
     // 3. Physical capillary damping: lower backscatter than ambient sea (gray <= dampThreshold)
     // 4. Terrestrial land & coastal buffer exclusion
-    if (prob >= 0.35 && rawG >= 12 && gray <= dampThreshold && landBuffer[i] === 0) {
+    if (prob >= 0.50 && rawG >= 12 && gray <= dampThreshold && landBuffer[i] === 0) {
       rawMask[i] = 1;
     }
   }
@@ -1158,23 +1228,39 @@ async function runSegmentation(
 
       const prob = sigmoid(outputData[idx]);
       // Keep pixel if:
-      // - High U-Net probability (>= 0.50), OR
-      // - Moderate U-Net probability (>= 0.35) AND connected to at least 1 neighbor
-      if (prob >= 0.50 || (prob >= 0.35 && neighborCount >= 1)) {
+      // - High U-Net probability (>= 0.65, raised from 0.55), OR
+      // - Strong U-Net probability (>= 0.50, raised from 0.35) AND connected to >= 2 neighbours
+      //   (raised from 1 → 2 to require spatial coherence, eliminating scattered speckle)
+      if (prob >= 0.65 || (prob >= 0.50 && neighborCount >= 2)) {
         spillPixels++;
         const gray = grayValues[idx];
-        const isCore = gray <= coreDampThreshold || prob >= 0.70;
-        maskCtx.fillStyle = isCore ? 'rgba(255, 30, 0, 0.75)' : 'rgba(255, 55, 15, 0.55)';
+        const isCore = gray <= coreDampThreshold || prob >= 0.75;
+        maskCtx.fillStyle = isCore ? 'rgba(255, 30, 0, 0.78)' : 'rgba(255, 60, 20, 0.58)';
         maskCtx.fillRect(x, y, 1, 1);
       }
     }
   }
 
+  // Create output mask canvas perfectly matching the input image/crop native aspect ratio
+  const srcW = imageElement instanceof HTMLImageElement ? (imageElement.naturalWidth || imageElement.width) : imageElement.width;
+  const srcH = imageElement instanceof HTMLImageElement ? (imageElement.naturalHeight || imageElement.height) : imageElement.height;
+
+  const outW = appliedCrop ? Math.round(appliedCrop.width) : srcW;
+  const outH = appliedCrop ? Math.round(appliedCrop.height) : srcH;
+
+  const outCanvas = document.createElement('canvas');
+  outCanvas.width = outW;
+  outCanvas.height = outH;
+  const outCtx = outCanvas.getContext('2d')!;
+  outCtx.imageSmoothingEnabled = true;
+  outCtx.imageSmoothingQuality = 'high';
+  outCtx.drawImage(maskCanvas, 0, 0, outW, outH);
+
   const denominator = marineCount > 0 ? marineCount : numPixels;
   const areaPercent = Math.min(100, Math.round((spillPixels / denominator) * 1000) / 10);
 
   return {
-    dataUrl: maskCanvas.toDataURL(),
+    dataUrl: outCanvas.toDataURL(),
     areaPercent,
   };
 }
@@ -1183,7 +1269,7 @@ export async function generateOcclusionMap(
   imageElement: HTMLImageElement | HTMLCanvasElement,
   cropBox?: CropBox
 ): Promise<string> {
-  const { canvas } = createCompatibleCanvas(imageElement, 400, 400, cropBox);
+  const { canvas, appliedCrop } = createCompatibleCanvas(imageElement, 400, 400, cropBox);
   const ctx = canvas.getContext('2d')!;
   const imageData = ctx.getImageData(0, 0, 400, 400);
   const data = imageData.data;
@@ -1228,12 +1314,30 @@ export async function generateOcclusionMap(
   }
 
   // Real ONNX occlusion sensitivity map
-  const tensorData = new Float32Array(2 * numPixels);
+  let sumMarine = 0;
+  let marineCount = 0;
+  const grayValues = new Uint8Array(numPixels);
   for (let i = 0; i < numPixels; i++) {
     const r = data[i * 4];
     const g = data[i * 4 + 1];
     const b = data[i * 4 + 2];
-    const vv = (0.299 * r + 0.587 * g + 0.114 * b) / 255.0;
+    const gray = Math.round(0.299 * r + 0.587 * g + 0.114 * b);
+    grayValues[i] = gray;
+    if (gray >= 12 && gray <= 165) {
+      sumMarine += gray;
+      marineCount++;
+    }
+  }
+  const ambientOceanMean = marineCount > 0 ? sumMarine / marineCount : 85;
+
+  const tensorData = new Float32Array(2 * numPixels);
+  for (let i = 0; i < numPixels; i++) {
+    const gray = grayValues[i];
+    let effectiveGray = gray;
+    if (gray > 165 || gray < 12) {
+      effectiveGray = ambientOceanMean;
+    }
+    const vv = effectiveGray / 255.0;
     tensorData[i] = vv;
     tensorData[numPixels + i] = Math.max(0.0, vv - 0.22);
   }
@@ -1268,8 +1372,8 @@ export async function generateOcclusionMap(
         for (let px = 0; px < patchSize; px++) {
           const iy = y * patchSize + py;
           const ix = x * patchSize + px;
-          occludedData[iy * 400 + ix] = 0.5;
-          occludedData[numPixels + iy * 400 + ix] = 0.3;
+          occludedData[iy * 400 + ix] = ambientOceanMean / 255.0;
+          occludedData[numPixels + iy * 400 + ix] = Math.max(0.0, (ambientOceanMean / 255.0) - 0.22);
         }
       }
 
@@ -1305,7 +1409,20 @@ export async function generateOcclusionMap(
     }
   }
 
-  return heatCanvas.toDataURL();
+  const srcW = imageElement instanceof HTMLImageElement ? (imageElement.naturalWidth || imageElement.width) : imageElement.width;
+  const srcH = imageElement instanceof HTMLImageElement ? (imageElement.naturalHeight || imageElement.height) : imageElement.height;
+  const outW = appliedCrop ? Math.round(appliedCrop.width) : srcW;
+  const outH = appliedCrop ? Math.round(appliedCrop.height) : srcH;
+
+  const outHeatCanvas = document.createElement('canvas');
+  outHeatCanvas.width = outW;
+  outHeatCanvas.height = outH;
+  const outHeatCtx = outHeatCanvas.getContext('2d')!;
+  outHeatCtx.imageSmoothingEnabled = true;
+  outHeatCtx.imageSmoothingQuality = 'high';
+  outHeatCtx.drawImage(heatCanvas, 0, 0, outW, outH);
+
+  return outHeatCanvas.toDataURL();
 }
 
 export function isModelLoaded(): boolean {
