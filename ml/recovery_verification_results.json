@@ -1,0 +1,324 @@
+{
+  "benchmark_comparison": {
+    "Degraded Pipeline (SpillSegNet + d2c57d4)": {
+      "oil_iou": 0.3278350711551979,
+      "oil_dice": 0.4381699509353261,
+      "oil_precision": 0.49935176672483106,
+      "oil_recall": 0.43825032415947396,
+      "clean_fp_scenes": 0,
+      "lookalike_fp_scenes": 0,
+      "shipwake_fp_scenes": 0,
+      "non_oil_fpr": NaN,
+      "per_oil_sample": [
+        {
+          "scene": "oil_00",
+          "iou": 0.7736177040850438,
+          "dice": 0.8723612786489746,
+          "recall": 0.7978899462143153,
+          "precision": 0.9621653084982538,
+          "tp_pixels": 11571,
+          "fn_pixels": 2931
+        },
+        {
+          "scene": "oil_01",
+          "iou": 0.5632697506758786,
+          "dice": 0.7206302692575601,
+          "recall": 0.5634495840141228,
+          "precision": 0.9994336919950698,
+          "tp_pixels": 30002,
+          "fn_pixels": 23245
+        },
+        {
+          "scene": "oil_02",
+          "iou": 0.4145015487704659,
+          "dice": 0.5860743653914909,
+          "recall": 0.8367789688616641,
+          "precision": 0.45096286107290234,
+          "tp_pixels": 6557,
+          "fn_pixels": 1279
+        },
+        {
+          "scene": "oil_03",
+          "iou": 0.4212613116895233,
+          "dice": 0.5927992385703502,
+          "recall": 0.5857439356596186,
+          "precision": 0.6000265763072221,
+          "tp_pixels": 9031,
+          "fn_pixels": 6387
+        },
+        {
+          "scene": "oil_04",
+          "iou": 0.4323772071863675,
+          "dice": 0.603719753451942,
+          "recall": 0.528984481864063,
+          "precision": 0.7030466399197592,
+          "tp_pixels": 11215,
+          "fn_pixels": 9986
+        },
+        {
+          "scene": "oil_05",
+          "iou": 0.3651014629542237,
+          "dice": 0.534907437816535,
+          "recall": 0.37693057247259437,
+          "precision": 0.9208474677140986,
+          "tp_pixels": 15473,
+          "fn_pixels": 25577
+        },
+        {
+          "scene": "oil_06",
+          "iou": 0.30822172619047616,
+          "dice": 0.47120716621640835,
+          "recall": 0.6927257525083612,
+          "precision": 0.3570351217410041,
+          "tp_pixels": 1657,
+          "fn_pixels": 735
+        },
+        {
+          "scene": "oil_07",
+          "iou": 0.0,
+          "dice": 0.0,
+          "recall": 0.0,
+          "precision": 0.0,
+          "tp_pixels": 0,
+          "fn_pixels": 25591
+        },
+        {
+          "scene": "oil_08",
+          "iou": 0.0,
+          "dice": 0.0,
+          "recall": 0.0,
+          "precision": 0.0,
+          "tp_pixels": 0,
+          "fn_pixels": 31047
+        },
+        {
+          "scene": "oil_09",
+          "iou": 0.0,
+          "dice": 0.0,
+          "recall": 0.0,
+          "precision": 0.0,
+          "tp_pixels": 0,
+          "fn_pixels": 20949
+        }
+      ]
+    },
+    "Recovered Pipeline (DANN-UNet + c43bc03)": {
+      "oil_iou": 0.3325577727467729,
+      "oil_dice": 0.4565989431139136,
+      "oil_precision": 0.534298630610607,
+      "oil_recall": 0.6213169460311148,
+      "clean_fp_scenes": 0,
+      "lookalike_fp_scenes": 0,
+      "shipwake_fp_scenes": 0,
+      "non_oil_fpr": NaN,
+      "per_oil_sample": [
+        {
+          "scene": "oil_00",
+          "iou": 0.2004448019684853,
+          "dice": 0.33395088493831054,
+          "recall": 0.8762929251137774,
+          "precision": 0.20628195763330898,
+          "tp_pixels": 12708,
+          "fn_pixels": 1794
+        },
+        {
+          "scene": "oil_01",
+          "iou": 0.7134784776466677,
+          "dice": 0.8327837051406402,
+          "recall": 0.7256183446954758,
+          "precision": 0.9770882330627418,
+          "tp_pixels": 38637,
+          "fn_pixels": 14610
+        },
+        {
+          "scene": "oil_02",
+          "iou": 0.10955902492467817,
+          "dice": 0.1974821031843989,
+          "recall": 0.8167432363450741,
+          "precision": 0.11232011232011233,
+          "tp_pixels": 6400,
+          "fn_pixels": 1436
+        },
+        {
+          "scene": "oil_03",
+          "iou": 0.15420625804879748,
+          "dice": 0.26720745442757415,
+          "recall": 0.5747178622389415,
+          "precision": 0.17406934485806896,
+          "tp_pixels": 8861,
+          "fn_pixels": 6557
+        },
+        {
+          "scene": "oil_04",
+          "iou": 0.2258974102589741,
+          "dice": 0.36854211187419456,
+          "recall": 0.5328050563652658,
+          "precision": 0.28169576059850376,
+          "tp_pixels": 11296,
+          "fn_pixels": 9905
+        },
+        {
+          "scene": "oil_05",
+          "iou": 0.3438841620482398,
+          "dice": 0.5117764934800918,
+          "recall": 0.42928136419001217,
+          "precision": 0.6335202761000863,
+          "tp_pixels": 17622,
+          "fn_pixels": 23428
+        },
+        {
+          "scene": "oil_06",
+          "iou": 0.02210537757126165,
+          "dice": 0.04325459596698082,
+          "recall": 0.6801839464882943,
+          "precision": 0.022337548224116863,
+          "tp_pixels": 1627,
+          "fn_pixels": 765
+        },
+        {
+          "scene": "oil_07",
+          "iou": 0.6192344681669552,
+          "dice": 0.7648484272545852,
+          "recall": 0.6290101988980501,
+          "precision": 0.975516635355433,
+          "tp_pixels": 16097,
+          "fn_pixels": 9494
+        },
+        {
+          "scene": "oil_08",
+          "iou": 0.6210633039731323,
+          "dice": 0.7662418888280822,
+          "recall": 0.631365349309112,
+          "precision": 0.9743997613958344,
+          "tp_pixels": 19602,
+          "fn_pixels": 11445
+        },
+        {
+          "scene": "oil_09",
+          "iou": 0.31570444286053695,
+          "dice": 0.47990176604427753,
+          "recall": 0.31715117666714404,
+          "precision": 0.9857566765578635,
+          "tp_pixels": 6644,
+          "fn_pixels": 14305
+        }
+      ]
+    },
+    "Fallback Pipeline (SpillSegNet + c43bc03)": {
+      "oil_iou": 0.3104914686587975,
+      "oil_dice": 0.41415879094096314,
+      "oil_precision": 0.40087621479834123,
+      "oil_recall": 0.4666997266993175,
+      "clean_fp_scenes": 0,
+      "lookalike_fp_scenes": 0,
+      "shipwake_fp_scenes": 0,
+      "non_oil_fpr": NaN,
+      "per_oil_sample": [
+        {
+          "scene": "oil_00",
+          "iou": 0.8133570675105485,
+          "dice": 0.8970732594073805,
+          "recall": 0.8507102468625017,
+          "precision": 0.9487810505268015,
+          "tp_pixels": 12337,
+          "fn_pixels": 2165
+        },
+        {
+          "scene": "oil_01",
+          "iou": 0.6703248817804748,
+          "dice": 0.8026281462872602,
+          "recall": 0.7800251657370368,
+          "precision": 0.8265801623945231,
+          "tp_pixels": 41534,
+          "fn_pixels": 11713
+        },
+        {
+          "scene": "oil_02",
+          "iou": 0.3399373240558772,
+          "dice": 0.5073928727157411,
+          "recall": 0.8167432363450741,
+          "precision": 0.36800644011270195,
+          "tp_pixels": 6400,
+          "fn_pixels": 1436
+        },
+        {
+          "scene": "oil_03",
+          "iou": 0.3388139028027377,
+          "dice": 0.5061404009824642,
+          "recall": 0.5747178622389415,
+          "precision": 0.4521841192080016,
+          "tp_pixels": 8861,
+          "fn_pixels": 6557
+        },
+        {
+          "scene": "oil_04",
+          "iou": 0.352269892741332,
+          "dice": 0.5210053032049804,
+          "recall": 0.532899391538135,
+          "precision": 0.5096305652036628,
+          "tp_pixels": 11298,
+          "fn_pixels": 9903
+        },
+        {
+          "scene": "oil_05",
+          "iou": 0.3422689173007841,
+          "dice": 0.5099856115107914,
+          "recall": 0.4317174177831912,
+          "precision": 0.6229173989455185,
+          "tp_pixels": 17722,
+          "fn_pixels": 23328
+        },
+        {
+          "scene": "oil_06",
+          "iou": 0.24794270039622066,
+          "dice": 0.39736231530101357,
+          "recall": 0.6801839464882943,
+          "precision": 0.28066241159220284,
+          "tp_pixels": 1627,
+          "fn_pixels": 765
+        },
+        {
+          "scene": "oil_07",
+          "iou": 0.0,
+          "dice": 0.0,
+          "recall": 0.0,
+          "precision": 0.0,
+          "tp_pixels": 0,
+          "fn_pixels": 25591
+        },
+        {
+          "scene": "oil_08",
+          "iou": 0.0,
+          "dice": 0.0,
+          "recall": 0.0,
+          "precision": 0.0,
+          "tp_pixels": 0,
+          "fn_pixels": 31047
+        },
+        {
+          "scene": "oil_09",
+          "iou": 0.0,
+          "dice": 0.0,
+          "recall": 0.0,
+          "precision": 0.0,
+          "tp_pixels": 0,
+          "fn_pixels": 20949
+        }
+      ]
+    }
+  },
+  "edge_cases": {
+    "synthetic_paint": {
+      "case": "Synthetic Paint Image",
+      "predicted_spill_pixels": 31360,
+      "area_percent": 11.96,
+      "border_false_positives": 0
+    },
+    "letterbox_borders": {
+      "case": "Oil with 60px Black Letterbox Borders",
+      "predicted_spill_pixels": 38704,
+      "area_percent": 14.76,
+      "border_false_positives": 0
+    }
+  }
+}
