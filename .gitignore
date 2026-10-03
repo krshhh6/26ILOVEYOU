@@ -45,6 +45,3 @@ ml/weights/
 
 # Local test artifacts & generated storage
 backend/storage/
-
-# Temporary
-README.md
