@@ -303,8 +303,8 @@ On Windows, launch both the FastAPI backend and Vite frontend with a single comm
 
 ```powershell
 # Clone the repository
-git clone https://github.com/tarunagnihotri534/SIH2026-OilSpillDetection.git
-cd SIH2026-OilSpillDetection
+git clone https://github.com/krshhh6/BUG-STALKERS-SPILL-SENSE.git
+cd BUG-STALKERS-SPILL-SENSE
 
 # Launch both servers in parallel
 .\start_localhost.ps1
